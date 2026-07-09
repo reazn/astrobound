@@ -4,6 +4,16 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-09 — Known systems in map (preview → teleport)
+- **Summary:** System map (**M**) lists known star systems as lightweight defs. Selecting one previews orbits/planets/star in the map without generating meshes. **Teleport** loads the system and moves the player; **Discover system** adds another known entry. Removed instant **B**-key jump.
+- **Areas:** `src/content/systems/catalog.ts`, `src/ui/systemMap.ts`, `src/ui/hud.css`, `src/main.ts`, `index.html`
+- **Notes:** Home Solara stays the live world until teleport; remote previews hide the player marker.
+
+### 2026-07-09 — Procedural systems, ore, B-key jump
+- **Summary:** Press **B** to hot-swap into a fully procedural star system (1–10 planets). Star types red/yellow/green/blue drive climate weights; planets get temperature/mass/gravity/climate metadata, spaced orbits with padding, and varied size/palette/liquid/rings. Surface ore nodules spawn on planets (collidable). Home handcrafted system unchanged until you jump.
+- **Areas:** `src/worldgen/generateSystem.ts`, `src/config/star.ts`, `src/visuals/star.ts`, `src/visuals/planetOre.ts`, `src/worldgen/planetInstance.ts`, `src/content/planets/meta.ts`, `src/main.ts`, `src/systems/possession.ts`, `src/systems/playerMovement.ts`, `src/systems/worldMarkers.ts`, `src/ui/systemMap.ts`, `index.html`
+- **Notes:** Procedural systems omit Meridian Station. Map shows climate/temp/mass in body detail.
+
 ### 2026-07-09 — Fix on-foot mouse look (raw pointer lock)
 - **Summary:** On-foot look felt like polling/stutter. Root causes: missing `requestPointerLock({ unadjustedMovement: true })` (OS acceleration), aggressive EMA/frame caps that chopped high-Hz mice, and a look low-pass that lagged deltas. Now request raw movement, apply look 1:1, and only briefly ignore post-lock spikes.
 - **Areas:** `src/engine/input.ts`, `src/systems/cameraFollow.ts`, `docs/AGENT_CHANGELOG.md`

@@ -99,6 +99,7 @@ export function updatePlayerMovement(
   rigForward: Vector3,
   dt: number,
   rocks?: RockColliders,
+  ore?: RockColliders,
 ) {
   for (const e of world.with("player", "movement", "position", "stats")) {
     const m = e.movement;
@@ -153,6 +154,7 @@ export function updatePlayerMovement(
       pos.addScaledVector(velTan, dt).addScaledVector(up, radial * dt);
       m.velocity.copy(velTan).addScaledVector(up, radial);
       resolveRockCollisions(pos, m.velocity, rocks, MOVEMENT.capsuleRadius);
+      resolveRockCollisions(pos, m.velocity, ore, MOVEMENT.capsuleRadius * 0.9);
       up.copy(pos).normalize();
       m.up.copy(up);
       m.grounded = false;
@@ -297,6 +299,7 @@ export function updatePlayerMovement(
     pos.addScaledVector(up, radial * dt);
     m.velocity.copy(velTan).addScaledVector(up, radial);
     resolveRockCollisions(pos, m.velocity, rocks, MOVEMENT.capsuleRadius);
+    resolveRockCollisions(pos, m.velocity, ore, MOVEMENT.capsuleRadius * 0.9);
 
     // Analytic ground resolution against the height field. Moving tangentially
     // on a sphere follows a chord, so you drift slightly *outward* each tick;
@@ -326,6 +329,7 @@ export function updatePlayerMovement(
 
     // Re-resolve after ground snap so rocks still block when standing.
     resolveRockCollisions(pos, m.velocity, rocks, MOVEMENT.capsuleRadius);
+    resolveRockCollisions(pos, m.velocity, ore, MOVEMENT.capsuleRadius * 0.9);
     up.copy(pos).normalize();
     m.up.copy(up);
     velTan.copy(m.velocity).addScaledVector(up, -m.velocity.dot(up));

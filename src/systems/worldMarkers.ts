@@ -13,7 +13,6 @@ export interface MarkerBody {
   parent: Object3D;
   systemPosition: Vector3;
   radius: number;
-  // If set, only visible in these possession modes.
   showWhen?: ReadonlyArray<"onFoot" | "ship">;
 }
 
@@ -26,6 +25,7 @@ interface Marker {
 
 export interface WorldMarkers {
   update(possessedSystemPos: Vector3, mode: "onFoot" | "ship"): void;
+  setBodies(bodies: MarkerBody[]): void;
   render(scene: Scene, camera: Camera): void;
   setSize(w: number, h: number): void;
   dispose(): void;
@@ -33,6 +33,26 @@ export interface WorldMarkers {
 
 function formatDist(u: number): string {
   return u > 9999 ? `${(u / 1000).toFixed(1)}k u` : `${u.toFixed(0)} u`;
+}
+
+function makeMarker(body: MarkerBody): Marker {
+  const root = document.createElement("div");
+  root.className = "sb-wmark";
+  root.innerHTML =
+    `<div class="sb-wmark-icon" style="color:${body.color};">${kindIconSvg(body.kind, body.color)}</div>` +
+    `<div class="sb-wmark-name">${body.name}</div>` +
+    `<div class="sb-wmark-kind">${body.kind}</div>` +
+    `<div class="sb-wmark-dist"></div>`;
+  const obj = new CSS2DObject(root);
+  obj.position.set(0, 0, 0);
+  obj.center.set(0.5, 0.5);
+  body.parent.add(obj);
+  return {
+    body,
+    obj,
+    nameEl: root.querySelector(".sb-wmark-name") as HTMLElement,
+    distEl: root.querySelector(".sb-wmark-dist") as HTMLElement,
+  };
 }
 
 export function createWorldMarkers(container: HTMLElement, bodies: MarkerBody[]): WorldMarkers {
@@ -45,25 +65,7 @@ export function createWorldMarkers(container: HTMLElement, bodies: MarkerBody[])
   el.style.zIndex = "5";
   container.appendChild(el);
 
-  const markers: Marker[] = bodies.map((body) => {
-    const root = document.createElement("div");
-    root.className = "sb-wmark";
-    root.innerHTML =
-      `<div class="sb-wmark-icon" style="color:${body.color};">${kindIconSvg(body.kind, body.color)}</div>` +
-      `<div class="sb-wmark-name">${body.name}</div>` +
-      `<div class="sb-wmark-kind">${body.kind}</div>` +
-      `<div class="sb-wmark-dist"></div>`;
-    const obj = new CSS2DObject(root);
-    obj.position.set(0, 0, 0);
-    obj.center.set(0.5, 0.5);
-    body.parent.add(obj);
-    return {
-      body,
-      obj,
-      nameEl: root.querySelector(".sb-wmark-name") as HTMLElement,
-      distEl: root.querySelector(".sb-wmark-dist") as HTMLElement,
-    };
-  });
+  let markers: Marker[] = bodies.map(makeMarker);
 
   return {
     update(possessedSystemPos, mode) {
@@ -76,6 +78,10 @@ export function createWorldMarkers(container: HTMLElement, bodies: MarkerBody[])
         const d = Math.max(0, possessedSystemPos.distanceTo(m.body.systemPosition) - m.body.radius);
         m.distEl.textContent = formatDist(d);
       }
+    },
+    setBodies(next) {
+      for (const m of markers) m.body.parent.remove(m.obj);
+      markers = next.map(makeMarker);
     },
     render(scene, camera) {
       renderer.render(scene, camera);

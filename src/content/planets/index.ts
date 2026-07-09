@@ -17,3 +17,4 @@ export const PLANETS_BY_ID: Record<string, PlanetDef> = Object.fromEntries(
 export const HOME_PLANET = CRAGFALL;
 
 export type { PlanetDef, OrbitElements, PlanetPalette, PlanetNoise, PlanetRingBand } from "./types";
+export type { PlanetMeta, ClimateKind } from "./meta";

@@ -72,4 +72,6 @@ export interface PlanetDef {
   rings?: readonly PlanetRingBand[];
   orbit: OrbitElements;
   hasStation?: boolean;
+  // Optional procedural metadata (handcrafted planets may omit).
+  meta?: import("./meta").PlanetMeta;
 }

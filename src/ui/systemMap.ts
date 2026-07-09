@@ -2,10 +2,12 @@ import {
   Scene, PerspectiveCamera, WebGLRenderer, AmbientLight, DirectionalLight,
   SphereGeometry, Mesh, MeshBasicMaterial, MeshStandardMaterial, Group,
   Color, Vector3, BufferGeometry, Line, LineBasicMaterial, RingGeometry,
-  DoubleSide, AdditiveBlending,   ConeGeometry, Raycaster, Vector2,
+  DoubleSide, AdditiveBlending, ConeGeometry, Raycaster, Vector2,
   ACESFilmicToneMapping,
 } from "three";
 import type { OrbitElements } from "../content/planets/types";
+import type { StarDef } from "../config/star";
+import type { KnownSystem } from "../content/systems/catalog";
 import { orbitPositionAt } from "../worldgen/orbits";
 import { icons, kindIconSvg } from "./icons";
 import "./hud.css";
@@ -28,35 +30,51 @@ export interface MapData {
   playerLabel: string;
   time: number;
   playerForward?: Vector3;
+  // When previewing a remote known system, hide the "you are here" marker.
+  showPlayer?: boolean;
+  star?: StarDef;
+}
+
+export interface SystemMapCallbacks {
+  onToggle: (open: boolean) => void;
+  onSelectSystem: (systemId: string) => void;
+  onTeleport: (systemId: string) => void | Promise<void>;
+  onDiscover?: () => void;
 }
 
 export interface SystemMap {
   readonly open: boolean;
   update(data: MapData): void;
+  setCatalog(systems: KnownSystem[], activeId: string, previewId: string): void;
+  setTeleportBusy(busy: boolean): void;
   dispose(): void;
 }
 
-const STAR_COLOR = "#ffd76a";
 const PLAYER_COLOR = "#7fffd0";
 
 export function createSystemMap(
   root: HTMLElement,
-  onToggle: (open: boolean) => void,
+  callbacks: SystemMapCallbacks,
 ): SystemMap {
   const overlay = document.createElement("div");
   overlay.className = "sb-map";
   overlay.innerHTML =
     `<canvas class="sb-map-canvas"></canvas>` +
     `<div class="sb-map-chrome">` +
-    `<div class="sb-map-title"><h1>System Map</h1><p>Galactic chart · live orbits</p></div>` +
+    `<div class="sb-map-title"><h1>System Map</h1><p>Known systems · preview before travel</p></div>` +
     `<div class="sb-map-hint">` +
     `<div><kbd>Scroll</kbd> Zoom</div>` +
     `<div><kbd>Drag</kbd> Orbit view</div>` +
     `<div><kbd>M</kbd> Close</div>` +
     `</div>` +
+    `<div class="sb-map-systems sb-panel">` +
+    `<h2>Known systems</h2>` +
+    `<div class="sb-map-systems-list" id="sb-map-syslist"></div>` +
+    `<button type="button" class="sb-map-discover" id="sb-map-discover">Discover system</button>` +
+    `</div>` +
     `<div class="sb-map-legend sb-panel">` +
     `<h2>Key</h2>` +
-    `<div class="sb-map-legend-row">${icons.sun(STAR_COLOR)} Star</div>` +
+    `<div class="sb-map-legend-row">${icons.sun("#ffd76a")} Star</div>` +
     `<div class="sb-map-legend-row">${icons.planet("#8fbcff")} Planet</div>` +
     `<div class="sb-map-legend-row">${icons.station("#7ab0ff")} Station</div>` +
     `<div class="sb-map-legend-row">${icons.you(PLAYER_COLOR)} You</div>` +
@@ -70,6 +88,12 @@ export function createSystemMap(
     `<h3 id="sb-map-sel-name"></h3>` +
     `<div class="meta" id="sb-map-sel-meta"></div>` +
     `</div>` +
+    `<div class="sb-map-travel sb-panel" id="sb-map-travel">` +
+    `<div class="sb-label">Preview</div>` +
+    `<h3 id="sb-map-travel-name">—</h3>` +
+    `<div class="meta" id="sb-map-travel-meta"></div>` +
+    `<button type="button" class="sb-map-teleport" id="sb-map-teleport">Teleport</button>` +
+    `</div>` +
     `</div>`;
   root.appendChild(overlay);
 
@@ -78,6 +102,12 @@ export function createSystemMap(
   const selKind = overlay.querySelector("#sb-map-sel-kind") as HTMLElement;
   const selName = overlay.querySelector("#sb-map-sel-name") as HTMLElement;
   const selMeta = overlay.querySelector("#sb-map-sel-meta") as HTMLElement;
+  const sysList = overlay.querySelector("#sb-map-syslist") as HTMLElement;
+  const travelPanel = overlay.querySelector("#sb-map-travel") as HTMLElement;
+  const travelName = overlay.querySelector("#sb-map-travel-name") as HTMLElement;
+  const travelMeta = overlay.querySelector("#sb-map-travel-meta") as HTMLElement;
+  const teleportBtn = overlay.querySelector("#sb-map-teleport") as HTMLButtonElement;
+  const discoverBtn = overlay.querySelector("#sb-map-discover") as HTMLButtonElement;
 
   const scene = new Scene();
   scene.background = new Color("#050810");
@@ -96,17 +126,13 @@ export function createSystemMap(
   const rootGroup = new Group();
   scene.add(rootGroup);
 
-  const starMesh = new Mesh(
-    new SphereGeometry(1, 32, 24),
-    new MeshBasicMaterial({ color: STAR_COLOR }),
-  );
-  const starGlow = new Mesh(
-    new SphereGeometry(2.4, 24, 16),
-    new MeshBasicMaterial({
-      color: STAR_COLOR, transparent: true, opacity: 0.28,
-      blending: AdditiveBlending, depthWrite: false,
-    }),
-  );
+  const starMat = new MeshBasicMaterial({ color: "#ffd76a" });
+  const starMesh = new Mesh(new SphereGeometry(1, 32, 24), starMat);
+  const starGlowMat = new MeshBasicMaterial({
+    color: "#ffd76a", transparent: true, opacity: 0.28,
+    blending: AdditiveBlending, depthWrite: false,
+  });
+  const starGlow = new Mesh(new SphereGeometry(2.4, 24, 16), starGlowMat);
   starMesh.add(starGlow);
   rootGroup.add(starMesh);
 
@@ -162,10 +188,14 @@ export function createSystemMap(
   };
   const bodyVis: BodyVis[] = [];
   let orbitsBuilt = false;
+  let bodiesSig = "";
   let open = false;
   let lastData: MapData | null = null;
+  let catalog: KnownSystem[] = [];
+  let activeSystemId = "";
+  let previewSystemId = "";
+  let teleportBusy = false;
 
-  // Camera orbit controls (manual — no OrbitControls dep).
   let yaw = 0.55;
   let pitch = 0.72;
   let dist = 1;
@@ -185,8 +215,17 @@ export function createSystemMap(
     for (const b of data.bodies) {
       maxR = Math.max(maxR, b.orbit.semiMajorAxis * (1 + b.orbit.eccentricity));
     }
-    maxR = Math.max(maxR, data.playerPosition.length() * 1.05);
+    if (data.showPlayer !== false) {
+      maxR = Math.max(maxR, data.playerPosition.length() * 1.05);
+    }
     return maxR;
+  };
+
+  const applyStarVisual = (star?: StarDef) => {
+    const col = star?.color ?? "#ffd76a";
+    const corona = star?.coronaColor ?? col;
+    starMat.color.set(col);
+    starGlowMat.color.set(corona);
   };
 
   const buildOrbits = (data: MapData, scale: number) => {
@@ -214,7 +253,13 @@ export function createSystemMap(
   };
 
   const ensureBodies = (data: MapData, scale: number) => {
-    if (bodyVis.length === data.bodies.length) return;
+    const sig = data.bodies.map((b) => `${b.name}:${b.kind}:${b.hasRings ? 1 : 0}`).join("|");
+    if (bodyVis.length === data.bodies.length && bodiesSig === sig) {
+      for (let i = 0; i < bodyVis.length; i++) bodyVis[i].body = data.bodies[i];
+      return;
+    }
+    bodiesSig = sig;
+    orbitsBuilt = false;
     while (bodyGroup.children.length) bodyGroup.remove(bodyGroup.children[0]);
     labelLayer.innerHTML = "";
     bodyVis.length = 0;
@@ -313,18 +358,66 @@ export function createSystemMap(
     selName.textContent = b.name;
     selName.style.color = b.color;
     const distStar = b.position.length();
-    const distYou = b.position.distanceTo(data.playerPosition);
+    const distYou = data.showPlayer === false
+      ? null
+      : b.position.distanceTo(data.playerPosition);
     selMeta.innerHTML =
       `${b.detail ? b.detail + "<br>" : ""}` +
       `${(distStar / 1000).toFixed(1)}k u from star<br>` +
-      `${(distYou / 1000).toFixed(1)}k u from you<br>` +
+      (distYou !== null ? `${(distYou / 1000).toFixed(1)}k u from you<br>` : "") +
       `Period ${(b.orbit.periodSeconds / 60).toFixed(1)} min`;
+  };
+
+  const refreshTravelPanel = () => {
+    const entry = catalog.find((s) => s.def.id === previewSystemId);
+    if (!entry) {
+      travelPanel.classList.remove("is-on");
+      return;
+    }
+    travelPanel.classList.add("is-on");
+    travelName.textContent = entry.def.name;
+    travelName.style.color = entry.def.star.color;
+    const here = entry.def.id === activeSystemId;
+    travelMeta.innerHTML =
+      `${entry.def.star.type} star · ${entry.def.planets.length} worlds` +
+      (entry.def.handcrafted ? " · home" : "") +
+      (here ? "<br>You are here" : "");
+    teleportBtn.disabled = here || teleportBusy;
+    teleportBtn.textContent = teleportBusy
+      ? "Jumping…"
+      : here
+        ? "Current system"
+        : "Teleport here";
+  };
+
+  const renderCatalogList = () => {
+    sysList.innerHTML = "";
+    for (const s of catalog) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "sb-map-sysbtn";
+      if (s.def.id === previewSystemId) btn.classList.add("is-preview");
+      if (s.def.id === activeSystemId) btn.classList.add("is-here");
+      btn.innerHTML =
+        `<span class="sb-map-sysdot" style="background:${s.def.star.color}"></span>` +
+        `<span class="sb-map-sysinfo">` +
+        `<span class="sb-map-sysname">${s.def.name}</span>` +
+        `<span class="sb-map-sysmeta">${s.def.star.type} · ${s.def.planets.length} worlds` +
+        (s.def.id === activeSystemId ? " · here" : "") +
+        `</span></span>`;
+      btn.addEventListener("click", () => {
+        callbacks.onSelectSystem(s.def.id);
+      });
+      sysList.appendChild(btn);
+    }
+    refreshTravelPanel();
   };
 
   function draw(data: MapData) {
     const scale = fitScale(data);
     if (!orbitsBuilt) buildOrbits(data, scale);
     ensureBodies(data, scale);
+    applyStarVisual(data.star);
 
     starMesh.scale.setScalar(0.045);
 
@@ -332,18 +425,23 @@ export function createSystemMap(
       v.mesh.position.copy(v.body.position).multiplyScalar(1 / scale);
     }
 
-    playerRoot.position.copy(data.playerPosition).multiplyScalar(1 / scale);
-    playerRoot.scale.setScalar(0.028);
-    if (data.playerForward && data.playerForward.lengthSq() > 1e-6) {
-      _p.copy(playerRoot.position).addScaledVector(data.playerForward, 0.08);
-      playerRoot.lookAt(_p);
+    const showPlayer = data.showPlayer !== false;
+    playerRoot.visible = showPlayer;
+    if (playerLabelEl) playerLabelEl.style.display = showPlayer ? "block" : "none";
+    if (showPlayer) {
+      playerRoot.position.copy(data.playerPosition).multiplyScalar(1 / scale);
+      playerRoot.scale.setScalar(0.028);
+      if (data.playerForward && data.playerForward.lengthSq() > 1e-6) {
+        _p.copy(playerRoot.position).addScaledVector(data.playerForward, 0.08);
+        playerRoot.lookAt(_p);
+      }
+      if (playerLabelEl) playerLabelEl.textContent = data.playerLabel;
     }
-    if (playerLabelEl) playerLabelEl.textContent = data.playerLabel;
 
     dist += (targetDist - dist) * 0.14;
     updateCamera();
     for (const v of bodyVis) projectLabel(v.mesh.position, v.labelEl);
-    if (playerLabelEl) projectLabel(playerRoot.position, playerLabelEl);
+    if (showPlayer && playerLabelEl) projectLabel(playerRoot.position, playerLabelEl);
     renderer.render(scene, camera);
   }
 
@@ -358,11 +456,12 @@ export function createSystemMap(
       dist = 2.4;
       yaw = 0.85;
       pitch = 0.95;
+      renderCatalogList();
       if (lastData) draw(lastData);
     } else {
       selPanel.classList.remove("is-on");
     }
-    onToggle(v);
+    callbacks.onToggle(v);
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -419,6 +518,13 @@ export function createSystemMap(
   overlay.querySelector("#sb-map-zo")!.addEventListener("click", () => {
     targetDist = Math.min(6, targetDist * 1.22);
   });
+  teleportBtn.addEventListener("click", () => {
+    if (teleportBusy || previewSystemId === activeSystemId) return;
+    void callbacks.onTeleport(previewSystemId);
+  });
+  discoverBtn.addEventListener("click", () => {
+    callbacks.onDiscover?.();
+  });
 
   window.addEventListener("keydown", onKey);
   window.addEventListener("resize", () => { if (open) size(); });
@@ -433,6 +539,26 @@ export function createSystemMap(
     update(data) {
       lastData = data;
       if (open) draw(data);
+    },
+    setCatalog(systems, activeId, previewId) {
+      const previewChanged = previewId !== previewSystemId;
+      catalog = systems;
+      activeSystemId = activeId;
+      previewSystemId = previewId;
+      if (previewChanged) {
+        orbitsBuilt = false;
+        bodiesSig = "";
+      }
+      if (open) {
+        renderCatalogList();
+        if (!previewChanged && lastData) draw(lastData);
+      } else {
+        refreshTravelPanel();
+      }
+    },
+    setTeleportBusy(busy) {
+      teleportBusy = busy;
+      refreshTravelPanel();
     },
     dispose() {
       window.removeEventListener("keydown", onKey);

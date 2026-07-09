@@ -27,6 +27,10 @@ import { updatePossession, type PossessionState } from "./systems/possession";
 import { createSpaceHud, type NavTarget } from "./systems/spaceHud";
 import { createWorldMarkers, type MarkerBody } from "./systems/worldMarkers";
 import { createSystemMap, type MapBody } from "./ui/systemMap";
+import {
+  createKnownSystemsCatalog, discoverKnownSystem, mapBodiesFromSystemDef,
+  type KnownSystem,
+} from "./content/systems/catalog";
 import { loadAsteroidField } from "./visuals/asteroids";
 import { createWarpFx } from "./visuals/warpFx";
 import { speedRelativeToPlanet, orbitalFrameVelocity } from "./systems/shipGravity";
@@ -39,7 +43,7 @@ import {
 } from "./systems/cameraOccluders";
 import { describeEntity } from "./ecs/gameEntity";
 import { SHIP } from "./config/ship";
-import { STAR } from "./config/star";
+import { starDefFromHome, type StarDef } from "./config/star";
 import { MOVEMENT } from "./config/movement";
 import { settings } from "./config/settings";
 import "./ui/hud.css";
@@ -71,13 +75,16 @@ async function main() {
 
   const rng = createRng("solar-001");
 
-  const planets: PlanetInstance[] = [];
+  let planets: PlanetInstance[] = [];
   for (let i = 0; i < PLANET_REGISTRY.length; i++) {
     const def = PLANET_REGISTRY[i];
     loading.setProgress(0.05 + (i / PLANET_REGISTRY.length) * 0.55, `Forming ${def.name}…`);
     planets.push(await createPlanetInstance(def));
   }
-  const home = planets.find((p) => p.def.id === HOME_PLANET.id)!;
+  let home = planets.find((p) => p.def.id === HOME_PLANET.id)!;
+  let activeStar: StarDef = starDefFromHome();
+  let stationEnabled = true;
+  let systemJumpBusy = false;
   const stationSystemPos = new Vector3();
   const stationPrevPos = new Vector3();
   for (const p of planets) {
@@ -93,7 +100,7 @@ async function main() {
     rc.scene.add(p.lod);
     rc.scene.add(p.atmosphere.skyDome);
   }
-  const star = createStar();
+  const star = createStar(activeStar);
   rc.scene.add(star.group);
   const stationVisual = createStation();
   rc.scene.add(stationVisual.group);
@@ -119,7 +126,8 @@ async function main() {
   // Prefetch remaining appearance GLTFs in the background so ESC previews
   // and swaps hit the shared cache instead of the network.
   for (const s of SHIPS) void loadGltf(s.url);
-  for (const c of CHARACTERS) void loadGltf(c.url);  let character: AnimatedCharacter = createAnimatedCharacter(
+  for (const c of CHARACTERS) void loadGltf(c.url);
+  let character: AnimatedCharacter = createAnimatedCharacter(
     playerSource, charDef0.clips, charDef0.modelYaw,
   );
   character.object.scale.setScalar(PLAYER_HEIGHT / character.height);
@@ -129,7 +137,7 @@ async function main() {
   let currentCharacterId = charDef0.id;
   let shipModel: ShipModel = shipModel0;
   rc.scene.add(asteroids.mesh);
-  const asteroidBodies = planets.map((p) => ({
+  let asteroidBodies = planets.map((p) => ({
     systemPosition: p.systemPosition, maxR: p.planet.maxR,
   }));
 
@@ -249,7 +257,7 @@ async function main() {
   rc.scene.add(shipMarkerAnchor);
 
   // In-world markers: celestials while piloting; ship icon while on foot.
-  const markerBodies: MarkerBody[] = [
+  let markerBodies: MarkerBody[] = [
     ...planets.map((p) => ({
       id: p.def.id,
       name: p.def.name, kind: "planet" as const, color: p.def.palette.atmosphere,
@@ -279,23 +287,29 @@ async function main() {
     worldMarkers.setSize(window.innerWidth, window.innerHeight));
 
   // Solar-system map (M). Pause game input while it's open so you don't fly blind.
-  const systemMap = createSystemMap(document.body, (open) => {
-    input.setPaused(open);
-    if (open) input.exitLock();
-  });
-  const mapBodies: MapBody[] = [
-    ...planets.map((p) => ({
-      name: p.def.name, color: p.def.palette.atmosphere, kind: "planet" as const,
-      orbit: p.def.orbit, position: p.systemPosition, radius: p.planet.maxR,
-      detail: `r ${p.def.radius}u`,
-      hasRings: !!(p.def.rings && p.def.rings.length > 0),
-      ringColor: p.def.rings?.[1]?.color ?? p.def.rings?.[0]?.color,
-    })),
-    {
-      name: STATION_NAME, color: "#7ab0ff", kind: "station" as const,
-      orbit: STATION_ORBIT, position: stationSystemPos, radius: STATION_RADIUS,
+  // Known systems are lightweight defs — preview in the map; teleport loads meshes.
+  const knownSystems: KnownSystem[] = createKnownSystemsCatalog(6);
+  let activeSystemId = knownSystems[0].def.id;
+  let previewSystemId = activeSystemId;
+
+  const systemMap = createSystemMap(document.body, {
+    onToggle: (open) => {
+      input.setPaused(open);
+      if (open) input.exitLock();
     },
-  ];
+    onSelectSystem: (id) => {
+      previewSystemId = id;
+      systemMap.setCatalog(knownSystems, activeSystemId, previewSystemId);
+    },
+    onTeleport: (id) => jumpToKnownSystem(id),
+    onDiscover: () => {
+      const entry = discoverKnownSystem(knownSystems);
+      previewSystemId = entry.def.id;
+      systemMap.setCatalog(knownSystems, activeSystemId, previewSystemId);
+      hud.setPrompt(`Discovered ${entry.def.name}`);
+    },
+  });
+  systemMap.setCatalog(knownSystems, activeSystemId, previewSystemId);
 
   const state: PossessionState = { mode: "onFoot", currentPlanet: home, dockBay: null };
 
@@ -339,17 +353,153 @@ async function main() {
         getCenter: (out) => out.copy(c),
       });
     }
+    const ore = planet.ore;
+    for (let i = 0; i < ore.centers.length; i++) {
+      const c = ore.centers[i];
+      const r = ore.radii[i];
+      registerCameraOccluder({
+        desc: describeEntity(`ore-${planet.def.id}-${i}`, "rock", {
+          label: "Ore",
+          cameraRadius: Math.max(0.8, r),
+        }),
+        enabled: true,
+        getCenter: (out) => out.copy(c),
+      });
+    }
     registeredRockPlanetId = planet.def.id;
   };
   syncCameraOccluders(home);
+
+  const rebuildNavBodies = () => {
+    markerBodies = [
+      ...planets.map((p) => ({
+        id: p.def.id,
+        name: p.def.name, kind: "planet" as const, color: p.def.palette.atmosphere,
+        parent: p.lod, systemPosition: p.systemPosition, radius: p.planet.maxR,
+        showWhen: ["ship"] as const,
+      })),
+      ...(stationEnabled ? [{
+        id: "station",
+        name: STATION_NAME, kind: "station" as const, color: "#7ab0ff",
+        parent: stationVisual.group, systemPosition: stationSystemPos, radius: STATION_RADIUS,
+        showWhen: ["ship"] as const,
+      }] : []),
+      {
+        id: "player-ship",
+        name: shipById(settings.selectedShipId).name,
+        kind: "ship" as const,
+        color: "#7fffd0",
+        parent: shipMarkerAnchor,
+        systemPosition: shipSystemPos,
+        radius: SHIP.length * 0.5,
+        showWhen: ["onFoot"] as const,
+      },
+    ];
+    worldMarkers.setBodies(markerBodies);
+    asteroidBodies = planets.map((p) => ({
+      systemPosition: p.systemPosition, maxR: p.planet.maxR,
+    }));
+  };
+
+  const previewBodiesFor = (systemId: string): MapBody[] => {
+    const entry = knownSystems.find((s) => s.def.id === systemId) ?? knownSystems[0];
+    return mapBodiesFromSystemDef(entry.def, game.time, entry.def.handcrafted);
+  };
+
+  const placeOnPlanet = (planet: PlanetInstance) => {
+    const seed = new Vector3(rng.world() * 2 - 1, rng.world() * 2 - 1, rng.world() * 2 - 1).normalize();
+    const up = findFlatLandingNormal(planet, seed, new Vector3());
+    let r = planet.planet.surfaceRadius(up.x, up.y, up.z) + 2;
+    if (planet.planet.def.liquid) r = Math.max(r, planet.planet.seaLevel + 2);
+    const pos = up.clone().multiplyScalar(r);
+    const face = tangentAt(up, new Vector3());
+    player.position!.copy(pos);
+    player.prevPosition!.copy(pos);
+    player.movement!.up.copy(up);
+    player.movement!.faceDir.copy(face);
+    player.movement!.velocity.set(0, 0, 0);
+    onFootRig.forward.copy(face);
+
+    const shipSeed = pos.clone().addScaledVector(face, 10).normalize();
+    const shipUp = findFlatLandingNormal(planet, shipSeed, new Vector3());
+    const shipLocal = landingRestPosition(planet, shipUp, new Vector3());
+    const shipFace = tangentAt(shipUp, face.clone());
+    ship.position!.copy(shipLocal);
+    ship.prevPosition!.copy(shipLocal);
+    ship.up!.copy(shipUp);
+    ship.faceDir!.copy(shipFace);
+    basisQuaternion(shipUp, shipFace, ship.ship!.orientation);
+    ship.ship!.mode = "landed";
+    ship.ship!.velocity.set(0, 0, 0);
+    ship.ship!.warpPhase = "idle";
+    ship.ship!.warpT = 0;
+    ship.ship!.warpTargetId = planet.def.id;
+    ship.ship!.throttle = 0;
+    ship.ship!.dockBay = null;
+    state.mode = "onFoot";
+    state.currentPlanet = planet;
+    state.dockBay = null;
+    physics.setActivePlanet(planet.colliderVertices, planet.colliderIndices);
+    activeColliderPlanetId = planet.def.id;
+    syncCameraOccluders(planet);
+  };
+
+  const jumpToKnownSystem = async (systemId: string) => {
+    if (systemJumpBusy || systemId === activeSystemId) return;
+    const entry = knownSystems.find((s) => s.def.id === systemId);
+    if (!entry) return;
+    systemJumpBusy = true;
+    systemMap.setTeleportBusy(true);
+    hud.setPrompt(`Jumping to ${entry.def.name}…`);
+    try {
+      const sys = entry.def;
+      const nextPlanets: PlanetInstance[] = [];
+      for (const def of sys.planets) {
+        nextPlanets.push(await createPlanetInstance(def));
+      }
+      for (const p of planets) p.dispose();
+      planets = nextPlanets;
+      home = planets[Math.floor(rng.world() * planets.length)]!;
+      activeStar = sys.star;
+      star.applyDef(activeStar);
+      rc.sun.color.set(activeStar.color);
+      stationEnabled = sys.handcrafted;
+      stationVisual.group.visible = stationEnabled;
+      game.time = 0;
+      for (const p of planets) {
+        rc.scene.add(p.lod);
+        rc.scene.add(p.atmosphere.skyDome);
+        orbitPositionAt(p.def.orbit, 0, p.systemPosition);
+        p.prevSystemPosition.copy(p.systemPosition);
+      }
+      if (stationEnabled) {
+        orbitPositionAt(STATION_ORBIT, 0, stationSystemPos);
+        stationPrevPos.copy(stationSystemPos);
+      }
+      activeSystemId = sys.id;
+      previewSystemId = sys.id;
+      rebuildNavBodies();
+      placeOnPlanet(home);
+      systemMap.setCatalog(knownSystems, activeSystemId, previewSystemId);
+      hud.setPrompt(
+        `Arrived: ${sys.name} · ${sys.star.type} star · ${planets.length} worlds · landed on ${home.def.name}`,
+      );
+    } catch (err) {
+      console.error(err);
+      hud.setPrompt("System jump failed");
+    } finally {
+      systemJumpBusy = false;
+      systemMap.setTeleportBusy(false);
+    }
+  };
 
   const simStep = (dt: number) => {
     game.time += dt;
     simTick++;
     for (const p of planets) p.prevSystemPosition.copy(p.systemPosition);
-    stationPrevPos.copy(stationSystemPos);
+    if (stationEnabled) stationPrevPos.copy(stationSystemPos);
     for (const p of planets) orbitPositionAt(p.def.orbit, game.time, p.systemPosition);
-    orbitPositionAt(STATION_ORBIT, game.time, stationSystemPos);
+    if (stationEnabled) orbitPositionAt(STATION_ORBIT, game.time, stationSystemPos);
 
     if (input.justPressed("KeyN") && state.mode === "ship") {
       settings.maintainMomentum = !settings.maintainMomentum;
@@ -360,6 +510,8 @@ async function main() {
       onFootForward: onFootRig.forward, character,
       stationPosition: stationSystemPos,
       stationRingAngle: stationVisual.ringAngle,
+      starRadius: activeStar.radius,
+      stationEnabled,
       getAimDir: () => aimDirSystem,
     }, dt);
 
@@ -561,7 +713,7 @@ async function main() {
       rc.hemi.color.set(focusPlanet.def.palette.atmosphere);
       rc.hemi.groundColor.set(focusPlanet.def.palette.lowland);
       rc.hemi.intensity = 0.18 + day * 0.55;
-      rc.sun.intensity = STAR.lightIntensity * (0.12 + day * 0.88) * 0.7;
+      rc.sun.intensity = activeStar.lightIntensity * (0.12 + day * 0.88) * 0.7;
       // Stars visible at night / twilight even while inside atmosphere.
       const starOp = Math.max(0, 1 - inside * day * 1.25);
       setStarfieldOpacity(starfield, starOp);
@@ -587,7 +739,7 @@ async function main() {
       setStarfieldOpacity(starfield, 1);
       rc.setBackground(null, 0);
       rc.hemi.intensity = 0.7;
-      rc.sun.intensity = STAR.lightIntensity * 0.7;
+      rc.sun.intensity = activeStar.lightIntensity * 0.7;
       underFilter.classList.remove("is-on");
     }
 
@@ -606,7 +758,7 @@ async function main() {
       asteroidFrameVel.set(0, 0, 0);
     }
     asteroids.update(
-      renderOrigin, renderOrigin, asteroidBodies, STAR_POS, STAR.radius,
+      renderOrigin, renderOrigin, asteroidBodies, STAR_POS, activeStar.radius,
       asteroidsActive, dtReal, asteroidFrameVel,
     );
 
@@ -633,12 +785,16 @@ async function main() {
     shipMarkerAnchor.position.y += 6;
 
     worldMarkers.update(renderOrigin, state.mode);
+    const previewEntry = knownSystems.find((s) => s.def.id === previewSystemId) ?? knownSystems[0];
+    const previewingRemote = previewSystemId !== activeSystemId;
     systemMap.update({
-      bodies: mapBodies,
+      bodies: previewBodiesFor(previewSystemId),
       playerPosition: renderOrigin,
       playerLabel: state.mode === "onFoot" ? "You (on foot)" : "Your ship",
       time: game.time,
       playerForward: state.mode === "ship" ? shipForward : undefined,
+      showPlayer: !previewingRemote,
+      star: previewEntry.def.star,
     });
 
     // Keep reticle aim fresh whenever the ship camera is active (not only HUD).
@@ -669,14 +825,14 @@ async function main() {
           systemPosition: p.systemPosition,
           radius: p.planet.maxR,
         })),
-        {
+        ...(stationEnabled ? [{
           id: "station",
           name: STATION_NAME,
           kind: "station" as const,
           color: "#7ab0ff",
           systemPosition: stationSystemPos,
           radius: STATION_RADIUS,
-        },
+        }] : []),
       ];
       hud.setCompassVisible(true);
       hud.updateFlight(

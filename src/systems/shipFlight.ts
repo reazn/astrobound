@@ -77,10 +77,12 @@ function findWarpLock(
   for (const p of deps.planets) {
     consider(p.def.id, "planet", p.def.name, p.systemPosition, p.planet.maxR, p);
   }
-  consider(
-    "station", "station", "Meridian Station",
-    deps.stationBody.systemPosition, deps.stationBody.radius,
-  );
+  if (deps.stationBody.radius > 0) {
+    consider(
+      "station", "station", "Meridian Station",
+      deps.stationBody.systemPosition, deps.stationBody.radius,
+    );
+  }
 
   return best;
 }

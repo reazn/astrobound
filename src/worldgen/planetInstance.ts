@@ -5,6 +5,7 @@ import { buildPlanetMesh, buildPlanetMeshAsync, lodSegments } from "./planetMesh
 import { createTerrainMaterial } from "../visuals/toonMaterial";
 import { createAtmosphere, type Atmosphere } from "../visuals/atmosphere";
 import { createPlanetRocks, type PlanetRocks } from "../visuals/planetRocks";
+import { createPlanetOre, type PlanetOre } from "../visuals/planetOre";
 import { createPlanetLiquid, type PlanetLiquidMesh } from "../visuals/planetLiquid";
 import { createPlanetRings, type PlanetRingsMesh } from "../visuals/planetRings";
 import type { PlanetDef } from "../content/planets/types";
@@ -16,12 +17,14 @@ export interface PlanetInstance {
   lod: LOD;
   atmosphere: Atmosphere;
   rocks: PlanetRocks;
+  ore: PlanetOre;
   liquid: PlanetLiquidMesh | null;
   rings: PlanetRingsMesh | null;
   colliderVertices: Float32Array;
   colliderIndices: Uint32Array;
   systemPosition: Vector3;
   prevSystemPosition: Vector3;
+  dispose(): void;
   updateLod(camera: Camera): void;
 }
 
@@ -57,6 +60,9 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
 
   const rocks = await createPlanetRocks(planet, createRng(`${def.seed}-rocks`).world);
   lod.add(rocks.group);
+
+  const ore = await createPlanetOre(planet, createRng(`${def.seed}-ore`).world);
+  lod.add(ore.group);
 
   // Match near-surface (high) terrain density so water facets match land.
   const liquid = createPlanetLiquid(planet, segs.high);
@@ -130,12 +136,39 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
     lod,
     atmosphere,
     rocks,
+    ore,
     liquid,
     rings,
     colliderVertices: midBuilt.colliderVertices,
     colliderIndices: midBuilt.colliderIndices,
     systemPosition: new Vector3(),
     prevSystemPosition: new Vector3(),
+    dispose() {
+      jobToken++;
+      lod.removeFromParent();
+      atmosphere.skyDome.removeFromParent();
+      midBuilt.geometry.dispose();
+      lowBuilt.geometry.dispose();
+      if (highOwnsGeo && meshHigh.geometry !== midBuilt.geometry) {
+        meshHigh.geometry.dispose();
+      }
+      rocks.group.traverse((o) => {
+        const m = o as Mesh;
+        if (m.isMesh) {
+          m.geometry?.dispose();
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          for (const mat of mats) mat?.dispose?.();
+        }
+      });
+      ore.group.traverse((o) => {
+        const m = o as Mesh;
+        if (m.isMesh) {
+          m.geometry?.dispose();
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          for (const mat of mats) mat?.dispose?.();
+        }
+      });
+    },
     updateLod(camera) {
       const dist = camera.position.distanceTo(lod.position);
       highWanted = dist < nearDist + 80;

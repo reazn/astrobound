@@ -2,38 +2,54 @@ import {
   Group, Mesh, SphereGeometry, MeshBasicMaterial, PointLight, Color,
   AdditiveBlending,
 } from "three";
+import type { StarDef } from "../config/star";
 import { STAR } from "../config/star";
-
-// The star: an emissive sphere (always rendered at floating-origin-relative
-// position, so it stays huge-but-correct-looking from any distance) plus a
-// soft additive corona shell and a point light that lights the whole system.
 
 export interface StarVisual {
   group: Group;
   light: PointLight;
+  applyDef(def: StarDef): void;
 }
 
-export function createStar(): StarVisual {
-  const group = new Group();
+export function createStar(def?: StarDef): StarVisual {
+  const d: StarDef = def ?? {
+    type: "yellow",
+    name: "Solara",
+    radius: STAR.radius,
+    color: STAR.color,
+    coronaColor: STAR.coronaColor,
+    lightIntensity: STAR.lightIntensity,
+    luminosity: 1,
+  };
 
-  const core = new Mesh(
-    new SphereGeometry(STAR.radius, 32, 24),
-    new MeshBasicMaterial({ color: new Color(STAR.color), fog: false }),
-  );
+  const group = new Group();
+  const coreMat = new MeshBasicMaterial({ color: new Color(d.color), fog: false });
+  const core = new Mesh(new SphereGeometry(1, 32, 24), coreMat);
+  core.scale.setScalar(d.radius);
   group.add(core);
 
-  const corona = new Mesh(
-    new SphereGeometry(STAR.radius * 1.35, 32, 24),
-    new MeshBasicMaterial({
-      color: new Color(STAR.coronaColor), transparent: true, opacity: 0.35,
-      blending: AdditiveBlending, depthWrite: false, fog: false,
-    }),
-  );
+  const coronaMat = new MeshBasicMaterial({
+    color: new Color(d.coronaColor), transparent: true, opacity: 0.35,
+    blending: AdditiveBlending, depthWrite: false, fog: false,
+  });
+  const corona = new Mesh(new SphereGeometry(1, 32, 24), coronaMat);
+  corona.scale.setScalar(d.radius * 1.35);
   group.add(corona);
 
-  const light = new PointLight(new Color(STAR.color), STAR.lightIntensity, 0, 0.15);
-  light.castShadow = false; // planets use their own directional-ish local light
+  const light = new PointLight(new Color(d.color), d.lightIntensity, 0, 0.15);
+  light.castShadow = false;
   group.add(light);
 
-  return { group, light };
+  return {
+    group,
+    light,
+    applyDef(next) {
+      core.scale.setScalar(next.radius);
+      corona.scale.setScalar(next.radius * 1.35);
+      coreMat.color.set(next.color);
+      coronaMat.color.set(next.coronaColor);
+      light.color.set(next.color);
+      light.intensity = next.lightIntensity;
+    },
+  };
 }

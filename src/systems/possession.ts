@@ -15,7 +15,6 @@ import {
 import { updateStationDocking, bayLocalPosition } from "./stationDocking";
 import { game } from "../engine/gameState";
 import { SHIP } from "../config/ship";
-import { STAR } from "../config/star";
 import { STATION_RADIUS } from "../content/station";
 
 export type Possessed = "onFoot" | "ship";
@@ -40,6 +39,8 @@ export interface PossessionDeps {
   character: AnimatedCharacter;
   stationPosition: Vector3;
   stationRingAngle: number;
+  starRadius: number;
+  stationEnabled: boolean;
   // Camera / reticle forward in system space — used for hyperdrive lock-on so
   // the cone matches what the player sees through the crosshair.
   getAimDir: () => Vector3;
@@ -48,17 +49,19 @@ export interface PossessionDeps {
 const dir = new Vector3();
 const bayPos = new Vector3();
 const lookDir = new Vector3();
-const STAR_BODY = { systemPosition: new Vector3(0, 0, 0), radius: STAR.radius };
+const STAR_BODY = { systemPosition: new Vector3(0, 0, 0), radius: 4000 as number };
 
 export function updatePossession(state: PossessionState, deps: PossessionDeps, dt: number) {
   const { world, player, ship, physics, input, hud, planets, stationPosition } = deps;
   const s = ship.ship!;
+  STAR_BODY.radius = deps.starRadius;
 
   if (state.mode === "onFoot") {
     const rocks = state.currentPlanet.rocks;
+    const ore = state.currentPlanet.ore;
     updatePlayerMovement(
       world, state.currentPlanet.planet, input, deps.onFootForward, dt,
-      { centers: rocks.centers, radii: rocks.radii },
+      rocks, ore,
     );
     const m = player.movement!;
     deps.character.setLocomotion(m.speed01, m.grounded, m.inLiquid && !m.flying);
@@ -92,6 +95,11 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
   }
 
   if (s.mode === "docked") {
+    if (!deps.stationEnabled) {
+      s.mode = "flying";
+      state.dockBay = null;
+      return;
+    }
     bayLocalPosition(s.dockBay ?? 0, deps.stationRingAngle, bayPos);
     ship.position!.copy(bayPos);
     ship.prevPosition!.copy(bayPos);
@@ -122,7 +130,9 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
     return;
   }
 
-  const dock = updateStationDocking(ship, stationPosition, deps.stationRingAngle, game.time, input);
+  const dock = deps.stationEnabled
+    ? updateStationDocking(ship, stationPosition, deps.stationRingAngle, game.time, input)
+    : { docked: false, canDock: false, nearestBay: null as number | null };
   if (dock.docked) {
     state.dockBay = dock.nearestBay;
     hud.setPrompt("Press E to undock");
@@ -139,7 +149,9 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
   }
   const flightDeps = {
     input, planets, starBody: STAR_BODY,
-    stationBody: { systemPosition: stationPosition, radius: STATION_RADIUS },
+    stationBody: deps.stationEnabled
+      ? { systemPosition: stationPosition, radius: STATION_RADIUS }
+      : { systemPosition: stationPosition, radius: 0 },
     time: game.time,
     lookDir,
   };
