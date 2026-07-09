@@ -18,6 +18,8 @@ export interface MapBody {
   position: Vector3;
   radius: number;
   detail?: string;
+  hasRings?: boolean;
+  ringColor?: string;
 }
 
 export interface MapData {
@@ -230,15 +232,27 @@ export function createSystemMap(
       mesh.userData.body = b;
       bodyGroup.add(mesh);
 
-      const halo = new Mesh(
-        new RingGeometry(r * 1.6, r * 1.9, 24),
-        new MeshBasicMaterial({
-          color: b.color, transparent: true, opacity: 0.35,
-          side: DoubleSide, depthWrite: false,
-        }),
-      );
-      halo.rotation.x = -Math.PI / 2;
-      mesh.add(halo);
+      if (b.hasRings) {
+        const ringCol = b.ringColor ?? b.color;
+        const ring = new Mesh(
+          new RingGeometry(r * 1.55, r * 2.35, 48),
+          new MeshBasicMaterial({
+            color: ringCol, transparent: true, opacity: 0.55,
+            side: DoubleSide, depthWrite: false,
+          }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        mesh.add(ring);
+        const gap = new Mesh(
+          new RingGeometry(r * 1.85, r * 1.95, 32),
+          new MeshBasicMaterial({
+            color: "#050810", transparent: true, opacity: 0.85,
+            side: DoubleSide, depthWrite: false,
+          }),
+        );
+        gap.rotation.x = -Math.PI / 2;
+        mesh.add(gap);
+      }
 
       const labelEl = document.createElement("div");
       labelEl.style.cssText =

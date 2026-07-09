@@ -2,11 +2,11 @@ import {
   Group, Mesh, Object3D, Vector3, Color, BufferGeometry, Material,
   MeshToonMaterial, InstancedMesh, Matrix4, Quaternion, DynamicDrawUsage,
 } from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { RngStream } from "../engine/rng";
-import { rngRange, rngInt } from "../engine/rng";
+import { rngRange } from "../engine/rng";
+import { loadGltf } from "../engine/gltfCache";
 import type { Planet } from "../worldgen/planet";
-import type { PlanetPalette } from "../content/planets/types";
+import { createTerrainRamp } from "../worldgen/palette";
 import { readableToonGradient } from "./toonMaterial";
 
 // Surface rocks scattered on each planet. Models: Quaternius rocks via poly.pizza
@@ -19,13 +19,12 @@ const ROCK_URLS = [
   "/models/rocks/rock_d.glb",
 ];
 
-const COUNT_PER_PLANET = 90;
-const SCALE_MIN = 0.8;
-const SCALE_MAX = 7.5;
+const COUNT_PER_PLANET = 720;
+const SCALE_MIN = 0.55;
+const SCALE_MAX = 6.5;
 
 export interface PlanetRocks {
   group: Group;
-  // Planet-local centers for camera occlusion / interaction.
   centers: Vector3[];
   radii: number[];
 }
@@ -34,14 +33,13 @@ interface Proto {
   geo: BufferGeometry;
 }
 
-const loader = new GLTFLoader();
 let protos: Proto[] | null = null;
 
 async function loadProtos(): Promise<Proto[]> {
   if (protos) return protos;
   const out: Proto[] = [];
   for (const url of ROCK_URLS) {
-    const gltf = await loader.loadAsync(url);
+    const gltf = await loadGltf(url);
     let found: BufferGeometry | undefined;
     gltf.scene.traverse((o: Object3D) => {
       if (found) return;
@@ -63,15 +61,39 @@ async function loadProtos(): Promise<Proto[]> {
   return out;
 }
 
-function tintForPalette(p: PlanetPalette, rng: RngStream): Color {
-  const picks = [p.rock, p.highland, p.mid, p.peak, p.lowland];
-  const base = new Color(picks[rngInt(rng, 0, picks.length - 1)]);
-  base.offsetHSL(
+function surfaceTint(
+  planet: Planet,
+  ramp: ReturnType<typeof createTerrainRamp>,
+  up: Vector3,
+  rng: RngStream,
+  out: Color,
+): Color {
+  const r = planet.surfaceRadius(up.x, up.y, up.z);
+  const heightNorm = (r - planet.minR) / Math.max(0.0001, planet.maxR - planet.minR);
+  const eps = 0.012;
+  const ux = up.x, uy = up.y, uz = up.z;
+  let tx = 1 - ux * ux, ty = -ux * uy, tz = -ux * uz;
+  let tl = Math.hypot(tx, ty, tz);
+  if (tl < 1e-4) {
+    tx = -uy * ux; ty = 1 - uy * uy; tz = -uy * uz;
+    tl = Math.hypot(tx, ty, tz) || 1;
+  }
+  tx /= tl; ty /= tl; tz /= tl;
+  const bx = uy * tz - uz * ty;
+  const by = uz * tx - ux * tz;
+  const bz = ux * ty - uy * tx;
+  const rA = planet.surfaceRadius(ux + tx * eps, uy + ty * eps, uz + tz * eps);
+  const rB = planet.surfaceRadius(ux + bx * eps, uy + by * eps, uz + bz * eps);
+  const grade = Math.hypot(rA - r, rB - r) / (eps * Math.max(1, r));
+  const slope01 = Math.min(1, grade * 2.4);
+  const mottle = (rng() - 0.5) * 0.35;
+  out.copy(ramp.colorAt(heightNorm, Math.max(0.35, slope01), mottle));
+  out.offsetHSL(
+    (rng() - 0.5) * 0.02,
     (rng() - 0.5) * 0.04,
-    (rng() - 0.5) * 0.08,
-    (rng() - 0.5) * 0.12,
+    (rng() - 0.5) * 0.06,
   );
-  return base;
+  return out;
 }
 
 export async function createPlanetRocks(
@@ -91,15 +113,19 @@ export async function createPlanetRocks(
   const up = new Vector3();
   const qAlign = new Quaternion();
   const yUp = new Vector3(0, 1, 0);
+  const color = new Color();
+  const seaNorm = planet.def.liquid
+    ? (planet.seaLevel - planet.minR) / Math.max(0.0001, planet.maxR - planet.minR)
+    : undefined;
+  const ramp = createTerrainRamp(planet.def.palette, seaNorm);
 
   for (let pi = 0; pi < pool.length; pi++) {
     const count = Math.floor(COUNT_PER_PLANET / pool.length)
       + (pi < COUNT_PER_PLANET % pool.length ? 1 : 0);
     if (count <= 0) continue;
 
-    const color = tintForPalette(planet.def.palette, rng);
     const material = new MeshToonMaterial({
-      color,
+      color: 0xffffff,
       gradientMap: readableToonGradient(),
     });
     (material as Material & { fog?: boolean }).fog = false;
@@ -110,21 +136,26 @@ export async function createPlanetRocks(
     mesh.receiveShadow = false;
     mesh.frustumCulled = false;
 
-    for (let i = 0; i < count; i++) {
+    let placed = 0;
+    let attempts = 0;
+    const maxAttempts = count * 8;
+    while (placed < count && attempts < maxAttempts) {
+      attempts++;
       const u = rng() * 2 - 1;
       const t = rng() * Math.PI * 2;
       const s = Math.sqrt(1 - u * u);
       up.set(Math.cos(t) * s, u, Math.sin(t) * s).normalize();
       const r = planet.surfaceRadius(up.x, up.y, up.z);
+      if (planet.def.liquid && r < planet.seaLevel + 1.5) continue;
       pos.copy(up).multiplyScalar(r);
 
       qAlign.setFromUnitVectors(yUp, up);
       quat.setFromAxisAngle(up, rng() * Math.PI * 2);
       quat.premultiply(qAlign);
 
-      const sc = rng() < 0.15
-        ? rngRange(rng, SCALE_MAX * 0.65, SCALE_MAX)
-        : rngRange(rng, SCALE_MIN, SCALE_MAX * 0.55);
+      const sc = rng() < 0.12
+        ? rngRange(rng, SCALE_MAX * 0.55, SCALE_MAX)
+        : rngRange(rng, SCALE_MIN, SCALE_MAX * 0.5);
       scale.set(
         sc * rngRange(rng, 0.85, 1.15),
         sc * rngRange(rng, 0.7, 1.1),
@@ -133,11 +164,15 @@ export async function createPlanetRocks(
 
       pos.addScaledVector(up, -scale.y * 0.12);
       mat.compose(pos, quat, scale);
-      mesh.setMatrixAt(i, mat);
+      mesh.setMatrixAt(placed, mat);
+      mesh.setColorAt(placed, surfaceTint(planet, ramp, up, rng, color));
       centers.push(pos.clone());
-      radii.push(Math.max(scale.x, scale.y, scale.z) * 0.55);
+      radii.push(Math.max(scale.x, scale.y, scale.z) * 0.62);
+      placed++;
     }
+    mesh.count = placed;
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     group.add(mesh);
   }
 

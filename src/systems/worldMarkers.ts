@@ -6,22 +6,26 @@ import { kindIconSvg } from "../ui/icons";
 import "../ui/hud.css";
 
 export interface MarkerBody {
+  id: string;
   name: string;
-  kind: "planet" | "station";
+  kind: "planet" | "station" | "ship" | "player";
   color: string;
   parent: Object3D;
   systemPosition: Vector3;
   radius: number;
+  // If set, only visible in these possession modes.
+  showWhen?: ReadonlyArray<"onFoot" | "ship">;
 }
 
 interface Marker {
   body: MarkerBody;
   obj: CSS2DObject;
+  nameEl: HTMLElement;
   distEl: HTMLElement;
 }
 
 export interface WorldMarkers {
-  update(possessedSystemPos: Vector3, visible: boolean): void;
+  update(possessedSystemPos: Vector3, mode: "onFoot" | "ship"): void;
   render(scene: Scene, camera: Camera): void;
   setSize(w: number, h: number): void;
   dispose(): void;
@@ -43,27 +47,32 @@ export function createWorldMarkers(container: HTMLElement, bodies: MarkerBody[])
 
   const markers: Marker[] = bodies.map((body) => {
     const root = document.createElement("div");
-    root.style.cssText =
-      "font-family:'Exo 2',system-ui,sans-serif;color:#e8f0f8;text-align:center;" +
-      "transform:translateY(-50%);text-shadow:0 2px 8px rgba(0,0,0,0.85);" +
-      "opacity:0.94;white-space:nowrap;pointer-events:none;";
+    root.className = "sb-wmark";
     root.innerHTML =
-      `<div style="width:18px;height:18px;margin:0 auto;color:${body.color};">${kindIconSvg(body.kind, body.color)}</div>` +
-      `<div style="font-size:12px;font-weight:600;letter-spacing:0.08em;margin-top:4px;text-transform:uppercase;">${body.name}</div>` +
-      `<div style="font-size:9px;opacity:0.55;letter-spacing:0.14em;text-transform:uppercase;">${body.kind}</div>` +
-      `<div class="mk-dist" style="font-family:'Share Tech Mono',monospace;font-size:11px;opacity:0.85;margin-top:2px;color:#7fd6ff;"></div>`;
+      `<div class="sb-wmark-icon" style="color:${body.color};">${kindIconSvg(body.kind, body.color)}</div>` +
+      `<div class="sb-wmark-name">${body.name}</div>` +
+      `<div class="sb-wmark-kind">${body.kind}</div>` +
+      `<div class="sb-wmark-dist"></div>`;
     const obj = new CSS2DObject(root);
     obj.position.set(0, 0, 0);
     obj.center.set(0.5, 0.5);
     body.parent.add(obj);
-    return { body, obj, distEl: root.querySelector(".mk-dist") as HTMLElement };
+    return {
+      body,
+      obj,
+      nameEl: root.querySelector(".sb-wmark-name") as HTMLElement,
+      distEl: root.querySelector(".sb-wmark-dist") as HTMLElement,
+    };
   });
 
   return {
-    update(possessedSystemPos, visible) {
+    update(possessedSystemPos, mode) {
       for (const m of markers) {
-        m.obj.visible = visible;
-        if (!visible) continue;
+        const modes = m.body.showWhen;
+        const show = !modes || modes.includes(mode);
+        m.obj.visible = show;
+        if (!show) continue;
+        if (m.nameEl.textContent !== m.body.name) m.nameEl.textContent = m.body.name;
         const d = Math.max(0, possessedSystemPos.distanceTo(m.body.systemPosition) - m.body.radius);
         m.distEl.textContent = formatDist(d);
       }

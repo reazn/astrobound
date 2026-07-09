@@ -4,6 +4,16 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-09 — Local compass, look-up cam, rock colliders, GLTF cache
+- **Summary:** On-foot compass shows only local craft (not planets). Character camera allows looking up with raised pivot / fade so the body doesn't fill the lens. Analytic sphere collisions for surface rocks. Shared `gltfCache` + deferred ESC preview warm + background prefetch of ship/character models to stop ESC spam refetching.
+- **Areas:** `src/main.ts`, `src/systems/cameraFollow.ts`, `src/systems/playerMovement.ts`, `src/systems/possession.ts`, `src/engine/gltfCache.ts`, `src/ui/modelPreview.ts`, `src/ui/settingsMenu.ts`, `src/visuals/shipModel.ts`, `src/visuals/animatedCharacter.ts`, `src/visuals/planetRocks.ts`, `src/visuals/asteroids.ts`, `src/config/settings.ts`
+- **Notes:** Rock collision is analytic (not Rapier) to match on-foot heightfield locomotion.
+
+### 2026-07-09 — Camera, slopes, rocks, HUD, Saturnus, loading
+- **Summary:** Smooth spring-arm pull-in (no instant snap); on-foot mouse look low-pass + tighter pointer-lock spike filter; steep hills slow then block (~42°/52°); denser surface rocks tinted to local terrain; ship display names distinct from astronauts; on-foot compass + in-world ship marker; system-map rings only for ringed worlds; new large ringed planet Saturnus; launch key W; loading bar during boot.
+- **Areas:** `src/systems/cameraFollow.ts`, `src/systems/shipCamera.ts`, `src/systems/playerMovement.ts`, `src/config/movement.ts`, `src/engine/input.ts`, `src/visuals/planetRocks.ts`, `src/visuals/planetRings.ts`, `src/content/ships.ts`, `src/content/planets/*`, `src/worldgen/planetInstance.ts`, `src/ui/systemMap.ts`, `src/systems/spaceHud.ts`, `src/systems/worldMarkers.ts`, `src/systems/possession.ts`, `src/ui/loadingScreen.ts`, `src/main.ts`, `index.html`
+- **Notes:** Map “halos” on every planet removed; only `PlanetDef.rings` draws ring graphics (world + map).
+
 ### 2026-07-09 — Rename project to Astrobound
 - **Summary:** Rebranded from Staffbound / rouge-like to **Astrobound**. Updated package name, page title, settings storage key, HUD comment, agent docs (`AGENTS.md`, `CLAUDE.md`, `PLAN.md`, cursor rule), and added README + `.gitignore`. PLAN milestones reframed as space exploration (not a combat roguelike). Repo target: https://github.com/reazn/astrobound
 - **Areas:** `package.json`, `package-lock.json`, `index.html`, `src/config/settings.ts`, `src/ui/hud.css`, `AGENTS.md`, `CLAUDE.md`, `PLAN.md`, `README.md`, `.gitignore`, `.cursor/rules/astrobound.mdc`, `docs/AGENT_CHANGELOG.md`

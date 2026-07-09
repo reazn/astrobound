@@ -2,7 +2,8 @@ import {
   WebGLRenderer, Scene, PerspectiveCamera, AmbientLight, DirectionalLight,
   Group, Object3D, Box3, Vector3, AnimationMixer, Clock, Mesh, HemisphereLight,
 } from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { loadGltf } from "../engine/gltfCache";
 import { makeReadableToon } from "../visuals/toonMaterial";
 
 // Tiny offscreen Three.js viewport for ESC-menu ship/character previews.
@@ -15,7 +16,6 @@ export interface ModelPreview {
   dispose(): void;
 }
 
-const loader = new GLTFLoader();
 const _box = new Box3();
 const _size = new Vector3();
 const _center = new Vector3();
@@ -54,6 +54,7 @@ export function createModelPreview(width = 220, height = 160): ModelPreview {
 
   let mixer: AnimationMixer | null = null;
   let loadToken = 0;
+  let currentUrl = "";
   const clock = new Clock();
   let disposed = false;
   let raf = 0;
@@ -91,8 +92,15 @@ export function createModelPreview(width = 220, height = 160): ModelPreview {
     async setUrl(url, opts = {}) {
       const token = ++loadToken;
       try {
-        const gltf = await loader.loadAsync(url);
+        const gltf = await loadGltf(url);
         if (token !== loadToken || disposed) return;
+
+        // Skip rebuild if the same URL is already showing (ESC spam / reopen).
+        if (currentUrl === url && turntable.children.length > 0) {
+          if (opts.yaw) turntable.children[0].rotation.y = opts.yaw;
+          return;
+        }
+        currentUrl = url;
 
         root.remove(turntable);
         turntable = new Group();
@@ -100,8 +108,8 @@ export function createModelPreview(width = 220, height = 160): ModelPreview {
         mixer?.stopAllAction();
         mixer = null;
 
-      const model = gltf.scene;
-      model.traverse((o) => {
+        const model = cloneSkeleton(gltf.scene) as Group;
+        model.traverse((o) => {
           const m = o as Mesh;
           if (m.isMesh) {
             m.frustumCulled = false;

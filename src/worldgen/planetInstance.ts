@@ -6,6 +6,7 @@ import { createTerrainMaterial } from "../visuals/toonMaterial";
 import { createAtmosphere, type Atmosphere } from "../visuals/atmosphere";
 import { createPlanetRocks, type PlanetRocks } from "../visuals/planetRocks";
 import { createPlanetLiquid, type PlanetLiquidMesh } from "../visuals/planetLiquid";
+import { createPlanetRings, type PlanetRingsMesh } from "../visuals/planetRings";
 import type { PlanetDef } from "../content/planets/types";
 
 export interface PlanetInstance {
@@ -16,6 +17,7 @@ export interface PlanetInstance {
   atmosphere: Atmosphere;
   rocks: PlanetRocks;
   liquid: PlanetLiquidMesh | null;
+  rings: PlanetRingsMesh | null;
   colliderVertices: Float32Array;
   colliderIndices: Uint32Array;
   systemPosition: Vector3;
@@ -59,6 +61,9 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
   // Match near-surface (high) terrain density so water facets match land.
   const liquid = createPlanetLiquid(planet, segs.high);
   if (liquid) lod.add(liquid.mesh);
+
+  const rings = createPlanetRings(def.radius, def.rings ?? []);
+  if (rings) lod.add(rings.group);
 
   let highLoaded = false;
   let highWanted = false;
@@ -126,6 +131,7 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
     atmosphere,
     rocks,
     liquid,
+    rings,
     colliderVertices: midBuilt.colliderVertices,
     colliderIndices: midBuilt.colliderIndices,
     systemPosition: new Vector3(),

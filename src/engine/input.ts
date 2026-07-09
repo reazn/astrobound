@@ -40,10 +40,10 @@ export function createInput(
   // regain, and after tab switches. Hard-cap each event, reject outliers vs a
   // running EMA, and cap the per-frame accumulator so a hitch can't dump a
   // whole second of buffered motion into one steer tick.
-  const MAX_EVENT = 40;
-  const MAX_FRAME = 90;
-  const OUTLIER_MULT = 4.5;
-  const SKIP_MS_AFTER_LOCK = 80;
+  const MAX_EVENT = 28;
+  const MAX_FRAME = 48;
+  const OUTLIER_MULT = 3.2;
+  const SKIP_MS_AFTER_LOCK = 120;
 
   const tryAutoLock = () => {
     if (settings.cursorLocked && !locked && !paused) canvas.requestPointerLock();

@@ -1,4 +1,4 @@
-import { Vector3, Quaternion } from "three";
+import { Vector3, Quaternion, Object3D } from "three";
 import { createRng } from "./engine/rng";
 import { createRenderer } from "./engine/renderer";
 import { initPhysics } from "./engine/physics";
@@ -13,7 +13,9 @@ import { createPlanetInstance, type PlanetInstance } from "./worldgen/planetInst
 import { orbitPositionAt } from "./worldgen/orbits";
 import { PLANET_REGISTRY, HOME_PLANET } from "./content/planets";
 import { STATION_NAME, STATION_RADIUS, STATION_ORBIT } from "./content/station";
-import { characterById } from "./content/characters";
+import { characterById, CHARACTERS } from "./content/characters";
+import { shipById, SHIPS } from "./content/ships";
+import { loadGltf } from "./engine/gltfCache";
 import { loadCharacterSource, createAnimatedCharacter, type AnimatedCharacter } from "./visuals/animatedCharacter";
 import { loadShipModel, type ShipModel } from "./visuals/shipModel";
 import { createStar } from "./visuals/star";
@@ -29,6 +31,7 @@ import { loadAsteroidField } from "./visuals/asteroids";
 import { createWarpFx } from "./visuals/warpFx";
 import { speedRelativeToPlanet, orbitalFrameVelocity } from "./systems/shipGravity";
 import { createSettingsMenu, type SettingsMenu } from "./ui/settingsMenu";
+import { createLoadingScreen } from "./ui/loadingScreen";
 import { buildWorldSnapshot } from "./net/buildSnapshot";
 import { findFlatLandingNormal, landingRestPosition } from "./systems/landingSite";
 import {
@@ -63,10 +66,17 @@ const STAR_POS = new Vector3(0, 0, 0);
 async function main() {
   const container = document.getElementById("app")!;
   const promptEl = document.getElementById("prompt");
+  const loading = createLoadingScreen(document.body);
+  loading.setProgress(0.02, "Charting orbits…");
 
   const rng = createRng("solar-001");
 
-  const planets = await Promise.all(PLANET_REGISTRY.map(createPlanetInstance));
+  const planets: PlanetInstance[] = [];
+  for (let i = 0; i < PLANET_REGISTRY.length; i++) {
+    const def = PLANET_REGISTRY[i];
+    loading.setProgress(0.05 + (i / PLANET_REGISTRY.length) * 0.55, `Forming ${def.name}…`);
+    planets.push(await createPlanetInstance(def));
+  }
   const home = planets.find((p) => p.def.id === HOME_PLANET.id)!;
   const stationSystemPos = new Vector3();
   const stationPrevPos = new Vector3();
@@ -77,6 +87,7 @@ async function main() {
   orbitPositionAt(STATION_ORBIT, 0, stationSystemPos);
   stationPrevPos.copy(stationSystemPos);
 
+  loading.setProgress(0.62, "Lighting the star…");
   const rc = createRenderer(container);
   for (const p of planets) {
     rc.scene.add(p.lod);
@@ -91,17 +102,24 @@ async function main() {
   const warpFx = createWarpFx();
   rc.scene.add(warpFx.mesh);
 
+  loading.setProgress(0.72, "Warming thrusters…");
   const physics = await initPhysics();
   physics.setActivePlanet(home.colliderVertices, home.colliderIndices);
 
   const asteroidRng = createRng("asteroids-001").world;
   const charDef0 = characterById(settings.selectedCharacterId);
+  loading.setProgress(0.8, "Loading crew & hull…");
   const [playerSource, shipModel0, asteroids] = await Promise.all([
     loadCharacterSource(charDef0.url),
     loadShipModel(settings.selectedShipId),
     loadAsteroidField(asteroidRng),
   ]);
-  let character: AnimatedCharacter = createAnimatedCharacter(
+  loading.setProgress(0.92, "Final checks…");
+
+  // Prefetch remaining appearance GLTFs in the background so ESC previews
+  // and swaps hit the shared cache instead of the network.
+  for (const s of SHIPS) void loadGltf(s.url);
+  for (const c of CHARACTERS) void loadGltf(c.url);  let character: AnimatedCharacter = createAnimatedCharacter(
     playerSource, charDef0.clips, charDef0.modelYaw,
   );
   character.object.scale.setScalar(PLAYER_HEIGHT / character.height);
@@ -183,6 +201,8 @@ async function main() {
       rc.scene.add(next.group);
       ship.mesh = next.group;
       shipModel = next;
+      const shipMk = markerBodies.find((m) => m.id === "player-ship");
+      if (shipMk) shipMk.name = next.def.name;
       prev.dispose();
     } finally {
       shipSwapBusy = false;
@@ -224,15 +244,33 @@ async function main() {
   underFilter.className = "sb-underwater";
   document.body.appendChild(underFilter);
 
-  // In-world (No Man's Sky-style) markers attached to each body's mesh.
+  const shipSystemPos = new Vector3();
+  const shipMarkerAnchor = new Object3D();
+  rc.scene.add(shipMarkerAnchor);
+
+  // In-world markers: celestials while piloting; ship icon while on foot.
   const markerBodies: MarkerBody[] = [
     ...planets.map((p) => ({
+      id: p.def.id,
       name: p.def.name, kind: "planet" as const, color: p.def.palette.atmosphere,
       parent: p.lod, systemPosition: p.systemPosition, radius: p.planet.maxR,
+      showWhen: ["ship"] as const,
     })),
     {
+      id: "station",
       name: STATION_NAME, kind: "station" as const, color: "#7ab0ff",
       parent: stationVisual.group, systemPosition: stationSystemPos, radius: STATION_RADIUS,
+      showWhen: ["ship"] as const,
+    },
+    {
+      id: "player-ship",
+      name: shipById(settings.selectedShipId).name,
+      kind: "ship" as const,
+      color: "#7fffd0",
+      parent: shipMarkerAnchor,
+      systemPosition: shipSystemPos,
+      radius: SHIP.length * 0.5,
+      showWhen: ["onFoot"] as const,
     },
   ];
   const worldMarkers = createWorldMarkers(container, markerBodies);
@@ -250,6 +288,8 @@ async function main() {
       name: p.def.name, color: p.def.palette.atmosphere, kind: "planet" as const,
       orbit: p.def.orbit, position: p.systemPosition, radius: p.planet.maxR,
       detail: `r ${p.def.radius}u`,
+      hasRings: !!(p.def.rings && p.def.rings.length > 0),
+      ringColor: p.def.rings?.[1]?.color ?? p.def.rings?.[0]?.color,
     })),
     {
       name: STATION_NAME, color: "#7ab0ff", kind: "station" as const,
@@ -581,8 +621,18 @@ async function main() {
       dtReal,
     );
 
-    // In-world body markers (shown while piloting) + live system-map data.
-    worldMarkers.update(renderOrigin, piloting);
+    // Ship system position for nav (planet-local when landed / launching / landing).
+    if (s.mode === "landed" || s.mode === "launching" || s.mode === "landing") {
+      shipSystemPos.copy(state.currentPlanet.systemPosition).add(ship.position!);
+    } else if (s.mode === "docked") {
+      shipSystemPos.copy(stationSystemPos).add(ship.position!);
+    } else {
+      shipSystemPos.copy(ship.position!);
+    }
+    shipMarkerAnchor.position.copy(shipModel.group.position);
+    shipMarkerAnchor.position.y += 6;
+
+    worldMarkers.update(renderOrigin, state.mode);
     systemMap.update({
       bodies: mapBodies,
       playerPosition: renderOrigin,
@@ -596,13 +646,21 @@ async function main() {
       rc.camera.getWorldDirection(aimDirSystem);
     }
 
-    if (piloting) {
-      camWorldPos.copy(renderOrigin).add(rc.camera.position);
-      rc.camera.getWorldDirection(camForward);
-      camRight.crossVectors(camForward, rc.camera.up).normalize();
-      aimDirSystem.copy(camForward);
+    camWorldPos.copy(renderOrigin).add(rc.camera.position);
+    rc.camera.getWorldDirection(camForward);
+    camRight.crossVectors(camForward, rc.camera.up).normalize();
 
-      const targets: NavTarget[] = [
+    if (piloting) {
+      aimDirSystem.copy(camForward);
+      const speedRefPlanet = focusPlanet ?? nearestPlanet(renderOrigin, planets);
+      const relSpeed = speedRelativeToPlanet(s.velocity, speedRefPlanet, game.time);
+      const absSpeed = s.velocity.length();
+      const warpTargetName = s.warpTargetId
+        ? (s.warpTargetId === "station"
+          ? STATION_NAME
+          : planets.find((p) => p.def.id === s.warpTargetId)?.def.name ?? null)
+        : null;
+      const flightTargets: NavTarget[] = [
         ...planets.map((p) => ({
           id: p.def.id,
           name: p.def.name,
@@ -620,22 +678,28 @@ async function main() {
           radius: STATION_RADIUS,
         },
       ];
-      // Relative speed (local orbital frame) + absolute universe speed (star rest).
-      const speedRefPlanet = focusPlanet ?? nearestPlanet(renderOrigin, planets);
-      const relSpeed = speedRelativeToPlanet(s.velocity, speedRefPlanet, game.time);
-      const absSpeed = s.velocity.length();
-      const warpTargetName = s.warpTargetId
-        ? (s.warpTargetId === "station"
-          ? STATION_NAME
-          : planets.find((p) => p.def.id === s.warpTargetId)?.def.name ?? null)
-        : null;
+      hud.setCompassVisible(true);
       hud.updateFlight(
         { camPos: camWorldPos, camForward, camRight },
         renderOrigin, relSpeed, absSpeed, s.throttle, s.boostFuel, s.boosting,
         s.steerX, s.steerY,
-        targets, s.warpPhase, s.warpT, dtReal, warpTargetName,
+        flightTargets, s.warpPhase, s.warpT, dtReal, warpTargetName,
         settings.maintainMomentum,
       );
+    } else if (state.mode === "onFoot") {
+      // Local surface targets only (ships / future players) — not system planets.
+      const localTargets: NavTarget[] = [{
+        id: "player-ship",
+        name: shipById(settings.selectedShipId).name,
+        kind: "ship",
+        color: "#7fffd0",
+        systemPosition: shipSystemPos,
+        radius: SHIP.length * 0.5,
+      }];
+      hud.setCompassVisible(true);
+      hud.updateCompass({ camPos: camWorldPos, camForward, camRight }, localTargets);
+    } else {
+      hud.setCompassVisible(false);
     }
 
     rc.render();
@@ -648,6 +712,8 @@ async function main() {
     update: simStep,
     render: renderStep,
   }).start();
+  loading.setProgress(1, "Ready");
+  loading.done();
 
   if (promptEl) {
     const hide = () => { promptEl.style.display = "none"; };

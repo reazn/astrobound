@@ -12,31 +12,31 @@ export interface ShipDef {
 export const SHIPS: ShipDef[] = [
   {
     id: "classic",
-    name: "Classic",
+    name: "Courier",
     url: "/models/ship.glb",
     noseYaw: Math.PI,
   },
   {
     id: "barbara",
-    name: "Barbara",
+    name: "Hornet",
     url: "/models/ships/Spaceship_BarbaraTheBee.gltf",
     noseYaw: Math.PI,
   },
   {
     id: "fernando",
-    name: "Fernando",
+    name: "Flarewing",
     url: "/models/ships/Spaceship_FernandoTheFlamingo.gltf",
     noseYaw: Math.PI,
   },
   {
     id: "finn",
-    name: "Finn",
+    name: "Pondskipper",
     url: "/models/ships/Spaceship_FinnTheFrog.gltf",
     noseYaw: Math.PI,
   },
   {
     id: "rae",
-    name: "Rae",
+    name: "Embertrail",
     url: "/models/ships/Spaceship_RaeTheRedPanda.gltf",
     noseYaw: Math.PI,
   },

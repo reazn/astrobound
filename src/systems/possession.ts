@@ -55,7 +55,11 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
   const s = ship.ship!;
 
   if (state.mode === "onFoot") {
-    updatePlayerMovement(world, state.currentPlanet.planet, input, deps.onFootForward, dt);
+    const rocks = state.currentPlanet.rocks;
+    updatePlayerMovement(
+      world, state.currentPlanet.planet, input, deps.onFootForward, dt,
+      { centers: rocks.centers, radii: rocks.radii },
+    );
     const m = player.movement!;
     deps.character.setLocomotion(m.speed01, m.grounded, m.inLiquid && !m.flying);
     if (m.didJump && !m.inLiquid) deps.character.play("jump");
@@ -100,7 +104,7 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
   if (s.mode === "landed") {
     snapLandedShipToTerrain(ship, state.currentPlanet);
     syncVelocityToPlanet(ship, state.currentPlanet, game.time);
-    hud.setPrompt("Press E to exit · Space to launch");
+    hud.setPrompt("Press E to exit · W to launch");
     if (input.justPressed("KeyE")) {
       dir.copy(ship.position!).addScaledVector(ship.faceDir!, 4).normalize();
       const r = state.currentPlanet.planet.surfaceRadius(dir.x, dir.y, dir.z);
@@ -111,7 +115,7 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
       state.mode = "onFoot";
       return;
     }
-    if (input.justPressed("Space")) {
+    if (input.justPressed("KeyW")) {
       beginLaunch(ship, state.currentPlanet);
       state.dockBay = null;
     }

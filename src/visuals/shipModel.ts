@@ -2,9 +2,9 @@ import {
   Group, Mesh, Box3, Vector3, Object3D,
   IcosahedronGeometry, MeshBasicMaterial, Color, AdditiveBlending,
 } from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { SHIP } from "../config/ship";
 import { shipById, type ShipDef } from "../content/ships";
+import { loadGltf } from "../engine/gltfCache";
 import { makeReadableToon } from "./toonMaterial";
 
 // Loads a selectable ship hull, re-centers it, scales to SHIP.length, and
@@ -19,15 +19,13 @@ export interface ShipModel {
   dispose(): void;
 }
 
-const loader = new GLTFLoader();
-
 export async function loadShipModel(shipIdOrDef?: string | ShipDef): Promise<ShipModel> {
   const def = typeof shipIdOrDef === "string" || shipIdOrDef === undefined
     ? shipById(shipIdOrDef ?? "classic")
     : shipIdOrDef;
-  const gltf = await loader.loadAsync(def.url);
+  const gltf = await loadGltf(def.url);
   const hull = new Group();
-  const model = gltf.scene;
+  const model = gltf.scene.clone(true);
   const hullMaterials: import("three").Material[] = [];
   model.traverse((o: Object3D) => {
     const m = o as Mesh;

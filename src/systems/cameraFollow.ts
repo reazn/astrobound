@@ -21,17 +21,21 @@ export function createCameraRig(): CameraRig {
 }
 
 const CONFIG = {
-  pitchMin: -0.35,
-  pitchMax: 1.2,
-  pivotHeight: 1.5,
-  shoulder: 0.7,
+  // Negative pitch = look up; positive = look down.
+  pitchMin: -0.95,
+  pitchMax: 1.15,
+  pivotHeight: 1.72,
+  shoulder: 0.55,
   wheelStep: 2.0,
   collisionPad: 1.1,
-  minDist: 1.4,
-  collisionSmooth: 16,
-  fadeStart: 3.2,
-  fadeEnd: 1.2,
-  // Keep the lens above the local surface even if the trimesh miss-fires.
+  minDist: 2.0,
+  collisionSmoothIn: 22,
+  collisionSmoothOut: 14,
+  fadeStart: 4.2,
+  fadeEnd: 2.0,
+  // Extra boom height / back-pull when looking up so the lens clears the head.
+  lookUpPivotBoost: 0.85,
+  lookUpDistBoost: 2.4,
   surfaceClearance: 1.35,
 };
 
@@ -45,6 +49,8 @@ const surfaceN = new Vector3();
 
 let smoothedDist = settings.cameraDistance;
 let hasSmoothed = false;
+let smoothDx = 0;
+let smoothDy = 0;
 
 export function updateCameraFollow(
   rig: CameraRig,
@@ -60,14 +66,19 @@ export function updateCameraFollow(
 ) {
   const { dx, dy } = input.consumeMouse();
   const sens = settings.mouseSensitivity;
+  const mouseBlend = 1 - Math.exp(-18 * dt);
+  smoothDx += (dx - smoothDx) * mouseBlend;
+  smoothDy += (dy - smoothDy) * mouseBlend;
+  if (Math.abs(smoothDx) < 0.01) smoothDx = 0;
+  if (Math.abs(smoothDy) < 0.01) smoothDy = 0;
 
-  q.setFromAxisAngle(playerUp, -dx * sens);
+  q.setFromAxisAngle(playerUp, -smoothDx * sens);
   rig.forward.applyQuaternion(q);
   rig.forward.addScaledVector(playerUp, -rig.forward.dot(playerUp));
   if (rig.forward.lengthSq() < 1e-6) rig.forward.set(0, 0, -1);
   rig.forward.normalize();
 
-  const dyEff = settings.invertY ? -dy : dy;
+  const dyEff = settings.invertY ? -smoothDy : smoothDy;
   rig.pitch = Math.min(
     CONFIG.pitchMax,
     Math.max(CONFIG.pitchMin, rig.pitch + dyEff * sens),
@@ -82,18 +93,20 @@ export function updateCameraFollow(
   }
 
   right.crossVectors(rig.forward, playerUp).normalize();
+  const lookUp = Math.max(0, Math.min(1, -rig.pitch / -CONFIG.pitchMin));
+  const pivotLift = CONFIG.pivotHeight + lookUp * CONFIG.lookUpPivotBoost;
   pivot.copy(playerPos)
-    .addScaledVector(playerUp, CONFIG.pivotHeight)
+    .addScaledVector(playerUp, pivotLift)
     .addScaledVector(right, CONFIG.shoulder);
 
   const cp = Math.cos(rig.pitch);
   const sp = Math.sin(rig.pitch);
   camDir.copy(rig.forward).multiplyScalar(-cp).addScaledVector(playerUp, sp).normalize();
-  const wanted = settings.cameraDistance;
+  const wanted = settings.cameraDistance + lookUp * CONFIG.lookUpDistBoost;
 
   let blocked = wanted;
   localPivot.copy(playerLocalPos)
-    .addScaledVector(playerUp, CONFIG.pivotHeight)
+    .addScaledVector(playerUp, pivotLift)
     .addScaledVector(right, CONFIG.shoulder);
   dir.copy(camDir);
 
@@ -113,10 +126,11 @@ export function updateCameraFollow(
   if (!hasSmoothed) {
     smoothedDist = blocked;
     hasSmoothed = true;
-  } else if (blocked < smoothedDist) {
-    smoothedDist = blocked;
   } else {
-    const k = 1 - Math.exp(-CONFIG.collisionSmooth * dt);
+    const rate = blocked < smoothedDist
+      ? CONFIG.collisionSmoothIn
+      : CONFIG.collisionSmoothOut;
+    const k = 1 - Math.exp(-rate * dt);
     smoothedDist += (blocked - smoothedDist) * k;
   }
 
@@ -146,11 +160,15 @@ export function updateCameraFollow(
   camera.up.copy(playerUp);
   camera.lookAt(pivot);
 
-  const t = (smoothedDist - CONFIG.fadeEnd) / (CONFIG.fadeStart - CONFIG.fadeEnd);
+  const fadeStart = CONFIG.fadeStart + lookUp * 1.2;
+  const fadeEnd = CONFIG.fadeEnd + lookUp * 0.6;
+  const t = (smoothedDist - fadeEnd) / (fadeStart - fadeEnd);
   character.setOpacity(Math.min(1, Math.max(0, t)));
 }
 
 export function resetCameraFollowSmoothing() {
   hasSmoothed = false;
   smoothedDist = settings.cameraDistance;
+  smoothDx = 0;
+  smoothDy = 0;
 }

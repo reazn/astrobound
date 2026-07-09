@@ -2,9 +2,9 @@ import {
   InstancedMesh, Matrix4, Quaternion, Vector3, Object3D, Mesh,
   BufferGeometry, Material, DynamicDrawUsage,
 } from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { RngStream } from "../engine/rng";
 import { rngRange } from "../engine/rng";
+import { loadGltf } from "../engine/gltfCache";
 import { makeReadableToon } from "./toonMaterial";
 
 // Asset: "Asteroid" by Poly by Google — CC-BY 3.0 via poly.pizza (needs credit).
@@ -43,7 +43,7 @@ export interface AsteroidField {
 const MODEL_URL = "/models/asteroid.glb";
 
 export async function loadAsteroidField(rng: RngStream): Promise<AsteroidField> {
-  const gltf = await new GLTFLoader().loadAsync(MODEL_URL);
+  const gltf = await loadGltf(MODEL_URL);
   let srcGeo: BufferGeometry | null = null;
   let srcMat: Material | null = null;
   gltf.scene.traverse((o: Object3D) => {

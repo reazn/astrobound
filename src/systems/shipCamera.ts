@@ -68,10 +68,11 @@ export function updateShipCamera(
   if (!hasSmoothed) {
     smoothedDist = blocked;
     hasSmoothed = true;
-  } else if (blocked < smoothedDist) {
-    smoothedDist = blocked;
   } else {
-    const k = 1 - Math.exp(-SHIP.cameraCollisionSmooth * dt);
+    const rate = blocked < smoothedDist
+      ? SHIP.cameraCollisionSmooth * 1.6
+      : SHIP.cameraCollisionSmooth;
+    const k = 1 - Math.exp(-rate * dt);
     smoothedDist += (blocked - smoothedDist) * k;
   }
 

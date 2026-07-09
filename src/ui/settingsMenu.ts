@@ -115,6 +115,9 @@ export function createSettingsMenu(
   };
 
   type PickerItem = { id: string; name: string; url: string; yaw?: number; playIdle?: boolean };
+  const warmers: Array<() => void> = [];
+  const previews: ModelPreview[] = [];
+  let previewsWarmed = false;
 
   const addAppearancePicker = (
     label: string,
@@ -173,17 +176,14 @@ export function createSettingsMenu(
       };
       list.appendChild(btn);
       buttons.push(btn);
+      styleBtn(btn, item.id === getId());
     }
 
-    refreshPreview();
-    return refreshPreview;
+    warmers.push(refreshPreview);
   };
 
-  const previews: ModelPreview[] = [];
-  const refreshers: Array<() => void> = [];
-
   if (appearance) {
-    refreshers.push(addAppearancePicker(
+    addAppearancePicker(
       "Spaceship",
       SHIPS.map((s) => ({
         id: s.id, name: s.name, url: s.url, yaw: s.noseYaw, playIdle: false,
@@ -193,8 +193,8 @@ export function createSettingsMenu(
         settings.selectedShipId = id;
         await appearance.onShipChange(id);
       },
-    ));
-    refreshers.push(addAppearancePicker(
+    );
+    addAppearancePicker(
       "Astronaut",
       CHARACTERS.map((c) => ({
         id: c.id, name: c.name, url: c.url, yaw: c.modelYaw, playIdle: true,
@@ -204,7 +204,7 @@ export function createSettingsMenu(
         settings.selectedCharacterId = id;
         await appearance.onCharacterChange(id);
       },
-    ));
+    );
   }
 
   const hint = document.createElement("div");
@@ -228,7 +228,11 @@ export function createSettingsMenu(
     overlay.style.display = "flex";
     input.setPaused(true);
     input.exitLock();
-    for (const r of refreshers) r();
+    // Warm previews once on first open (uses shared GLTF cache after that).
+    if (!previewsWarmed) {
+      previewsWarmed = true;
+      for (const r of warmers) r();
+    }
   };
   const close = () => {
     if (!isOpen) return;

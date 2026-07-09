@@ -36,9 +36,13 @@ export const icons = {
   activity: (c?: string) => nodeToSvg(Activity, c),
 };
 
-export function kindIconSvg(kind: "planet" | "station" | "player" | "star", color?: string): string {
+export function kindIconSvg(
+  kind: "planet" | "station" | "player" | "star" | "ship",
+  color?: string,
+): string {
   if (kind === "station") return icons.station(color);
   if (kind === "player") return icons.you(color);
   if (kind === "star") return icons.sun(color);
+  if (kind === "ship") return icons.ship(color);
   return icons.planet(color);
 }

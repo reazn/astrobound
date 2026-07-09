@@ -9,7 +9,7 @@ import "../ui/hud.css";
 export interface NavTarget {
   id: string;
   name: string;
-  kind: "planet" | "station" | "player";
+  kind: "planet" | "station" | "player" | "ship";
   color: string;
   systemPosition: Vector3;
   radius: number;
@@ -41,7 +41,9 @@ export interface SpaceHud {
     warpTargetName?: string | null,
     maintainMomentum?: boolean,
   ): void;
+  updateCompass(view: FlightHudView, targets: NavTarget[]): void;
   setPilotingVisible(visible: boolean): void;
+  setCompassVisible(visible: boolean): void;
 }
 
 function formatEta(seconds: number): string {
@@ -147,6 +149,7 @@ export function createSpaceHud(root: HTMLElement): SpaceHud {
   const steerDot = reticle.querySelector("#sb-steer") as HTMLElement;
 
   let pilotingVisible = false;
+  let compassVisible = false;
   let smoothRel = 0;
   let smoothAbs = 0;
   let smoothLook: { dist: number; eta: number; id: string } | null = null;
@@ -198,12 +201,28 @@ export function createSpaceHud(root: HTMLElement): SpaceHud {
     setPilotingVisible(visible) {
       pilotingVisible = visible;
       flight.classList.toggle("is-on", visible);
-      compass.classList.toggle("is-on", visible);
       reticle.classList.toggle("is-on", visible);
       if (!visible) {
         lookPanel.classList.remove("is-on");
         warpFx.classList.remove("is-on");
       }
+      if (visible) {
+        compassVisible = true;
+        compass.classList.add("is-on");
+      }
+    },
+    setCompassVisible(visible) {
+      compassVisible = visible;
+      compass.classList.toggle("is-on", visible);
+      if (!visible) compassMarkers.innerHTML = "";
+    },
+    updateCompass(view, targets) {
+      if (!compassVisible) return;
+      const markers: HudMarker[] = targets.map((t) => ({
+        id: t.id, name: t.name, kind: t.kind, color: t.color,
+        systemPosition: t.systemPosition, radius: t.radius,
+      }));
+      renderCompass(computeCompassEntries(view.camPos, view.camForward, view.camRight, markers));
     },
     updateFlight(
       view, _shipPos, relSpeed, absSpeed, throttle, _boostFuel, boosting,

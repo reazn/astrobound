@@ -33,9 +33,9 @@ const defaults: Settings = {
   invertY: false,
   cursorLocked: true,
 
-  cameraDistance: 13,
-  minZoom: 6,
-  maxZoom: 34,
+  cameraDistance: 11,
+  minZoom: 5,
+  maxZoom: 28,
 
   fov: 62,
 

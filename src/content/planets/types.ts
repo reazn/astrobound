@@ -47,6 +47,14 @@ export interface PlanetLiquid {
   opacity: number; // 0..1 surface alpha
 }
 
+// Planetary ring band. Scales are multipliers of planet.radius.
+export interface PlanetRingBand {
+  innerScale: number;
+  outerScale: number;
+  color: string;
+  opacity: number;
+}
+
 export interface PlanetDef {
   id: string;
   name: string;
@@ -61,6 +69,7 @@ export interface PlanetDef {
   fogFar: number;
   cloudCoverage: number; // 0..1, 0 disables clouds
   liquid?: PlanetLiquid;
+  rings?: readonly PlanetRingBand[];
   orbit: OrbitElements;
   hasStation?: boolean;
 }

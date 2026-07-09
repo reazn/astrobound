@@ -1,7 +1,7 @@
 import type { Vector3 } from "three";
 import { SHIP } from "../config/ship";
 
-export type HudMarkerKind = "planet" | "station" | "player";
+export type HudMarkerKind = "planet" | "station" | "player" | "ship";
 
 export interface HudMarker {
   id: string;
@@ -83,5 +83,6 @@ export function computeCompassEntries(
 export function kindIcon(kind: HudMarkerKind): string {
   if (kind === "station") return "◈";
   if (kind === "player") return "▲";
+  if (kind === "ship") return "◆";
   return "●";
 }

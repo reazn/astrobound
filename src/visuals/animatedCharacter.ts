@@ -2,8 +2,8 @@ import {
   Group, AnimationMixer, AnimationAction, AnimationClip, LoopOnce, LoopRepeat,
   Box3, Vector3, Mesh, Material, Object3D, SkinnedMesh,
 } from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { loadGltf } from "../engine/gltfCache";
 import { makeReadableToon } from "./toonMaterial";
 
 // Animated character: locomotion (idle/walk/run) blended by speed, a jump
@@ -49,11 +49,21 @@ export interface AnimatedCharacter {
   update(dt: number): void;
 }
 
-const loader = new GLTFLoader();
+const characterSourceCache = new Map<string, Promise<CharacterSource>>();
 
 export async function loadCharacterSource(url: string): Promise<CharacterSource> {
-  const gltf = await loader.loadAsync(url);
-  return { scene: gltf.scene as Group, animations: gltf.animations.slice() };
+  let pending = characterSourceCache.get(url);
+  if (!pending) {
+    pending = loadGltf(url).then((gltf) => ({
+      scene: gltf.scene as Group,
+      animations: gltf.animations.slice(),
+    }));
+    characterSourceCache.set(url, pending);
+    pending.catch(() => {
+      if (characterSourceCache.get(url) === pending) characterSourceCache.delete(url);
+    });
+  }
+  return pending;
 }
 
 type JumpPhase = "none" | "start" | "air" | "land";

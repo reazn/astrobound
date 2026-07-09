@@ -35,8 +35,10 @@ export const MOVEMENT = {
   autostepHeight: 0.5,
   autostepMinWidth: 0.2,
   snapToGroundDist: 0.5,
-  maxSlopeClimbDeg: 55,
-  minSlopeSlideDeg: 62,
+  // Steepness: full speed below softMax, slows toward hardMax, blocked above.
+  maxSlopeClimbDeg: 42,
+  hardSlopeClimbDeg: 52,
+  maxStepHeight: 0.55,
 
   // Debug / explore fly mode (toggle with V on foot).
   flySpeedMult: 5,

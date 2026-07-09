@@ -12,8 +12,9 @@ import type { Input } from "../engine/input";
 
 const SKIN = 0.05;
 const SNAP = 0.7; // ground-stick band when walking down slopes/terraces
-const MAX_STEP = 0.85; // auto-step: ledges up to this are climbable in one move
-const CLIMB_SLOPE = 1.8; // ~tan(61°): gentler hills stay walkable
+const MAX_STEP = MOVEMENT.maxStepHeight;
+const SOFT_SLOPE = Math.tan((MOVEMENT.maxSlopeClimbDeg * Math.PI) / 180);
+const HARD_SLOPE = Math.tan((MOVEMENT.hardSlopeClimbDeg * Math.PI) / 180);
 
 const up = new Vector3();
 const fwd = new Vector3();
@@ -28,8 +29,53 @@ const gDirA = new Vector3();
 const gDirB = new Vector3();
 const gradV = new Vector3();
 const sample = new Vector3();
+const rockPush = new Vector3();
 const tmpX = new Vector3(1, 0, 0);
 const tmpZ = new Vector3(0, 0, 1);
+
+export interface RockColliders {
+  centers: readonly Vector3[];
+  radii: readonly number[];
+}
+
+function resolveRockCollisions(
+  pos: Vector3,
+  vel: Vector3,
+  rocks: RockColliders | undefined,
+  playerRadius: number,
+) {
+  if (!rocks || rocks.centers.length === 0) return;
+  // Chest-height sample so we don't collide with the buried base of rocks.
+  up.copy(pos).normalize();
+  sample.copy(pos).addScaledVector(up, 0.85);
+  const maxReach = 14;
+  const maxReachSq = maxReach * maxReach;
+  for (let i = 0; i < rocks.centers.length; i++) {
+    const c = rocks.centers[i];
+    const dx = sample.x - c.x;
+    const dy = sample.y - c.y;
+    const dz = sample.z - c.z;
+    const dSq = dx * dx + dy * dy + dz * dz;
+    if (dSq > maxReachSq) continue;
+    const r = rocks.radii[i] + playerRadius;
+    if (dSq >= r * r || dSq < 1e-8) continue;
+    const d = Math.sqrt(dSq);
+    rockPush.set(dx / d, dy / d, dz / d);
+    const pen = r - d;
+    pos.addScaledVector(rockPush, pen);
+    sample.addScaledVector(rockPush, pen);
+    const vn = vel.dot(rockPush);
+    if (vn < 0) vel.addScaledVector(rockPush, -vn);
+  }
+}
+
+function slopeFactor(climb: number, horiz: number): number {
+  if (horiz < 1e-5) return 1;
+  const grade = climb / horiz;
+  if (grade <= SOFT_SLOPE) return 1;
+  if (grade >= HARD_SLOPE) return 0;
+  return 1 - (grade - SOFT_SLOPE) / (HARD_SLOPE - SOFT_SLOPE);
+}
 
 function moveTowards(vec: Vector3, tgt: Vector3, maxDelta: number) {
   delta.copy(tgt).sub(vec);
@@ -52,6 +98,7 @@ export function updatePlayerMovement(
   input: Input,
   rigForward: Vector3,
   dt: number,
+  rocks?: RockColliders,
 ) {
   for (const e of world.with("player", "movement", "position", "stats")) {
     const m = e.movement;
@@ -105,6 +152,7 @@ export function updatePlayerMovement(
       e.prevPosition!.copy(pos);
       pos.addScaledVector(velTan, dt).addScaledVector(up, radial * dt);
       m.velocity.copy(velTan).addScaledVector(up, radial);
+      resolveRockCollisions(pos, m.velocity, rocks, MOVEMENT.capsuleRadius);
       up.copy(pos).normalize();
       m.up.copy(up);
       m.grounded = false;
@@ -115,6 +163,17 @@ export function updatePlayerMovement(
     }
 
     const speed = MOVEMENT.moveSpeed * stats.moveSpeedMult;
+    const curGroundR = planet.surfaceRadius(up.x, up.y, up.z);
+
+    // Probe climb grade along wish so steep hills slow / block before integrate.
+    let climbMul = 1;
+    if (m.grounded && wishLen > 0) {
+      const probe = Math.max(0.45, Math.min(1.4, speed * dt * 4));
+      tentative.copy(pos).addScaledVector(wish, probe);
+      tUp.copy(tentative).normalize();
+      const probeClimb = planet.surfaceRadius(tUp.x, tUp.y, tUp.z) - curGroundR;
+      climbMul = slopeFactor(probeClimb, probe);
+    }
 
     // Slide.
     m.slideCooldown = Math.max(0, m.slideCooldown - dt);
@@ -133,7 +192,7 @@ export function updatePlayerMovement(
 
     if (m.sliding) {
       m.slideTime -= dt;
-      target.copy(wish).multiplyScalar(speed);
+      target.copy(wish).multiplyScalar(speed * Math.max(0.35, climbMul));
       moveTowards(velTan, target, 18 * dt);
       if (m.slideTime <= 0) {
         m.sliding = false;
@@ -141,9 +200,9 @@ export function updatePlayerMovement(
       }
     } else if (wishLen > 0) {
       const accel = m.grounded
-        ? MOVEMENT.groundAccel
+        ? MOVEMENT.groundAccel * (0.35 + 0.65 * climbMul)
         : MOVEMENT.groundAccel * MOVEMENT.airControl;
-      target.copy(wish).multiplyScalar(speed);
+      target.copy(wish).multiplyScalar(speed * climbMul);
       moveTowards(velTan, target, accel * dt);
     } else if (m.grounded) {
       velTan.multiplyScalar(Math.max(0, 1 - MOVEMENT.groundFriction * dt));
@@ -191,19 +250,18 @@ export function updatePlayerMovement(
     // Integrate tangential and radial moves separately so we can slope-limit
     // horizontal motion (no teleporting up cliffs).
     e.prevPosition!.copy(pos);
-    const curGroundR = planet.surfaceRadius(up.x, up.y, up.z);
 
     const horiz = velTan.length() * dt;
     if (horiz > 1e-5) {
       tentative.copy(pos).addScaledVector(velTan, dt);
       tUp.copy(tentative).normalize();
       const climb = planet.surfaceRadius(tUp.x, tUp.y, tUp.z) - curGroundR;
-      const maxClimb = MAX_STEP + CLIMB_SLOPE * horiz;
-      if (!m.grounded || climb <= maxClimb) {
-        pos.copy(tentative); // walkable slope (or airborne): advance
+      const maxClimb = MAX_STEP + HARD_SLOPE * horiz;
+      const canStep = !m.grounded || climb <= maxClimb;
+      const gradeOk = !m.grounded || slopeFactor(climb, horiz) > 0.02;
+      if (canStep && gradeOk) {
+        pos.copy(tentative);
       } else {
-        // Wall: slide along it by removing the uphill component of velocity
-        // (estimate the terrain gradient with a few cheap height samples).
         const eps = 0.7;
         gDirA.copy(velTan).normalize();
         gDirB.crossVectors(up, gDirA).normalize();
@@ -215,14 +273,20 @@ export function updatePlayerMovement(
           .addScaledVector(gDirB, (rBp - rBn) * 0.5);
         if (gradV.lengthSq() > 1e-8) {
           gradV.normalize();
-          velTan.addScaledVector(gradV, -velTan.dot(gradV)); // keep along-wall part
+          velTan.addScaledVector(gradV, -velTan.dot(gradV));
           const horiz2 = velTan.length() * dt;
           if (horiz2 > 1e-5) {
             tentative.copy(pos).addScaledVector(velTan, dt);
             tUp.copy(tentative).normalize();
             const climb2 = planet.surfaceRadius(tUp.x, tUp.y, tUp.z) - curGroundR;
-            if (climb2 <= MAX_STEP + CLIMB_SLOPE * horiz2) pos.copy(tentative);
-            else velTan.set(0, 0, 0);
+            if (
+              climb2 <= MAX_STEP + HARD_SLOPE * horiz2
+              && slopeFactor(climb2, horiz2) > 0.02
+            ) {
+              pos.copy(tentative);
+            } else {
+              velTan.set(0, 0, 0);
+            }
           }
         } else {
           velTan.set(0, 0, 0);
@@ -232,6 +296,7 @@ export function updatePlayerMovement(
     // Radial (gravity / jump) move along the surface normal.
     pos.addScaledVector(up, radial * dt);
     m.velocity.copy(velTan).addScaledVector(up, radial);
+    resolveRockCollisions(pos, m.velocity, rocks, MOVEMENT.capsuleRadius);
 
     // Analytic ground resolution against the height field. Moving tangentially
     // on a sphere follows a chord, so you drift slightly *outward* each tick;
@@ -259,7 +324,9 @@ export function updatePlayerMovement(
       m.grounded = false;
     }
 
-    // Frame outputs for render/animation.
+    // Re-resolve after ground snap so rocks still block when standing.
+    resolveRockCollisions(pos, m.velocity, rocks, MOVEMENT.capsuleRadius);
+    up.copy(pos).normalize();
     m.up.copy(up);
     velTan.copy(m.velocity).addScaledVector(up, -m.velocity.dot(up));
     const hs = velTan.length();

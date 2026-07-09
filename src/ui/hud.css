@@ -294,6 +294,115 @@
 
 .sb-cmark-icon svg { width: 16px; height: 16px; }
 
+.sb-wmark {
+  font-family: var(--hud-font);
+  color: var(--hud-text);
+  text-align: center;
+  transform: translateY(-50%);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+  opacity: 0.94;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sb-wmark-icon {
+  width: 18px;
+  height: 18px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sb-wmark-icon svg { width: 16px; height: 16px; }
+
+.sb-wmark-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.sb-wmark-kind {
+  font-size: 9px;
+  opacity: 0.55;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sb-wmark-dist {
+  font-family: var(--hud-mono);
+  font-size: 11px;
+  opacity: 0.85;
+  margin-top: 2px;
+  color: var(--hud-cyan);
+}
+
+.sb-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(40, 70, 110, 0.45), transparent 55%),
+    linear-gradient(180deg, #071018 0%, #050810 100%);
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.sb-loading.is-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.sb-loading-inner {
+  width: min(360px, 82vw);
+  text-align: center;
+}
+
+.sb-loading-title {
+  font-family: var(--hud-font);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #e8f0f8;
+  margin-bottom: 28px;
+}
+
+.sb-loading-label {
+  font-family: var(--hud-font);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hud-muted);
+  margin-bottom: 12px;
+}
+
+.sb-loading-track {
+  height: 4px;
+  background: rgba(127, 214, 255, 0.12);
+  border: 1px solid rgba(127, 214, 255, 0.22);
+  overflow: hidden;
+}
+
+.sb-loading-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #3a8fb8, #7fd6ff);
+  transition: width 0.2s ease;
+}
+
+.sb-loading-pct {
+  margin-top: 10px;
+  font-family: var(--hud-mono);
+  font-size: 12px;
+  color: var(--hud-cyan);
+}
+
 .sb-cmark-name {
   margin-top: 2px;
   font-size: 9px;
