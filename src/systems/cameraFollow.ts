@@ -49,8 +49,6 @@ const surfaceN = new Vector3();
 
 let smoothedDist = settings.cameraDistance;
 let hasSmoothed = false;
-let smoothDx = 0;
-let smoothDy = 0;
 
 export function updateCameraFollow(
   rig: CameraRig,
@@ -64,25 +62,26 @@ export function updateCameraFollow(
   dt = 1 / 60,
   surfaceRadiusFn?: (nx: number, ny: number, nz: number) => number,
 ) {
+  // Apply look 1:1 — low-pass on deltas feels like polling/lag on foot.
+  // Ship steering keeps its own inertia filter separately.
   const { dx, dy } = input.consumeMouse();
   const sens = settings.mouseSensitivity;
-  const mouseBlend = 1 - Math.exp(-18 * dt);
-  smoothDx += (dx - smoothDx) * mouseBlend;
-  smoothDy += (dy - smoothDy) * mouseBlend;
-  if (Math.abs(smoothDx) < 0.01) smoothDx = 0;
-  if (Math.abs(smoothDy) < 0.01) smoothDy = 0;
 
-  q.setFromAxisAngle(playerUp, -smoothDx * sens);
-  rig.forward.applyQuaternion(q);
+  if (dx !== 0) {
+    q.setFromAxisAngle(playerUp, -dx * sens);
+    rig.forward.applyQuaternion(q);
+  }
   rig.forward.addScaledVector(playerUp, -rig.forward.dot(playerUp));
   if (rig.forward.lengthSq() < 1e-6) rig.forward.set(0, 0, -1);
   rig.forward.normalize();
 
-  const dyEff = settings.invertY ? -smoothDy : smoothDy;
-  rig.pitch = Math.min(
-    CONFIG.pitchMax,
-    Math.max(CONFIG.pitchMin, rig.pitch + dyEff * sens),
-  );
+  const dyEff = settings.invertY ? -dy : dy;
+  if (dyEff !== 0) {
+    rig.pitch = Math.min(
+      CONFIG.pitchMax,
+      Math.max(CONFIG.pitchMin, rig.pitch + dyEff * sens),
+    );
+  }
 
   const wheel = input.consumeWheel();
   if (wheel !== 0) {
@@ -169,6 +168,4 @@ export function updateCameraFollow(
 export function resetCameraFollowSmoothing() {
   hasSmoothed = false;
   smoothedDist = settings.cameraDistance;
-  smoothDx = 0;
-  smoothDy = 0;
 }

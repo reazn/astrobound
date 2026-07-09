@@ -4,6 +4,11 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-09 — Fix on-foot mouse look (raw pointer lock)
+- **Summary:** On-foot look felt like polling/stutter. Root causes: missing `requestPointerLock({ unadjustedMovement: true })` (OS acceleration), aggressive EMA/frame caps that chopped high-Hz mice, and a look low-pass that lagged deltas. Now request raw movement, apply look 1:1, and only briefly ignore post-lock spikes.
+- **Areas:** `src/engine/input.ts`, `src/systems/cameraFollow.ts`, `docs/AGENT_CHANGELOG.md`
+- **Notes:** Known Chromium issue with 1000Hz mice can still rare-skip; raw lock is the standard game fix (Three.js PointerLockControls / MDN).
+
 ### 2026-07-09 — Local compass, look-up cam, rock colliders, GLTF cache
 - **Summary:** On-foot compass shows only local craft (not planets). Character camera allows looking up with raised pivot / fade so the body doesn't fill the lens. Analytic sphere collisions for surface rocks. Shared `gltfCache` + deferred ESC preview warm + background prefetch of ship/character models to stop ESC spam refetching.
 - **Areas:** `src/main.ts`, `src/systems/cameraFollow.ts`, `src/systems/playerMovement.ts`, `src/systems/possession.ts`, `src/engine/gltfCache.ts`, `src/ui/modelPreview.ts`, `src/ui/settingsMenu.ts`, `src/visuals/shipModel.ts`, `src/visuals/animatedCharacter.ts`, `src/visuals/planetRocks.ts`, `src/visuals/asteroids.ts`, `src/config/settings.ts`

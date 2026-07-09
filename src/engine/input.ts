@@ -4,6 +4,12 @@ import { settings } from "../config/settings";
 // immediately. When settings.cursorLocked is on, we grab pointer lock on the
 // first gesture so the mouse drives the camera instead of the OS cursor. ESC
 // releases the lock; the settings menu (which pauses input) can re-grab it.
+//
+// Pointer-lock look uses raw deltas when the browser supports it
+// (`unadjustedMovement: true`) so OS mouse acceleration doesn't warp aim.
+// High-Hz mice (500–1000Hz) can still emit rare Chromium spikes on lock /
+// focus; we only suppress those briefly after lock, and never drop normal
+// motion mid-look (aggressive EMA/caps feel like "polling stutter").
 
 export interface Input {
   held(code: string): boolean;
@@ -20,6 +26,22 @@ export interface Input {
   dispose(): void;
 }
 
+function requestRawPointerLock(el: HTMLElement) {
+  const anyEl = el as HTMLElement & {
+    requestPointerLock: (opts?: { unadjustedMovement?: boolean }) => unknown;
+  };
+  try {
+    const result = anyEl.requestPointerLock({ unadjustedMovement: true });
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      (result as Promise<void>).catch(() => {
+        try { el.requestPointerLock(); } catch { /* */ }
+      });
+    }
+  } catch {
+    try { el.requestPointerLock(); } catch { /* */ }
+  }
+}
+
 export function createInput(
   canvas: HTMLElement,
   onUnexpectedUnlock: () => void,
@@ -32,26 +54,19 @@ export function createInput(
   let locked = false;
   let paused = false;
   let intentionalExit = false;
-  let skipNextMove = false;
   let skipUntil = 0;
-  let emaMag = 8;
 
-  // Chromium pointer-lock often emits huge movementX/Y bursts on lock, focus
-  // regain, and after tab switches. Hard-cap each event, reject outliers vs a
-  // running EMA, and cap the per-frame accumulator so a hitch can't dump a
-  // whole second of buffered motion into one steer tick.
-  const MAX_EVENT = 28;
-  const MAX_FRAME = 48;
-  const OUTLIER_MULT = 3.2;
-  const SKIP_MS_AFTER_LOCK = 120;
+  // Only used right after lock / focus regain — not during normal look.
+  const SKIP_MS_AFTER_LOCK = 60;
+  // Soft per-event clamp for pathological Chromium bursts (thousands of px).
+  // Keep this high so 1000Hz mice aren't chopped into stuttery chunks.
+  const MAX_EVENT = 200;
 
   const tryAutoLock = () => {
-    if (settings.cursorLocked && !locked && !paused) canvas.requestPointerLock();
+    if (settings.cursorLocked && !locked && !paused) requestRawPointerLock(canvas);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    // While playing (pointer locked, or any in-game key), block browser chrome
-    // shortcuts that steal focus / close the tab / open bookmarks.
     const blockBrowser = locked || !paused;
     if (blockBrowser) {
       const mod = e.ctrlKey || e.metaKey || e.altKey;
@@ -62,10 +77,7 @@ export function createInput(
       ) {
         e.preventDefault();
       }
-      if (mod) {
-        // Ctrl/Cmd/Alt + letter/number/symbol — bookmarks, close tab, new tab, etc.
-        e.preventDefault();
-      }
+      if (mod) e.preventDefault();
     }
     if (paused) return;
     if (!down.has(e.code)) pressed.add(e.code);
@@ -75,17 +87,11 @@ export function createInput(
   const onKeyUp = (e: KeyboardEvent) => down.delete(e.code);
   const onMouseMove = (e: MouseEvent) => {
     if (!locked || paused) return;
-    if (skipNextMove || performance.now() < skipUntil) {
-      skipNextMove = false;
-      return;
-    }
-    let dx = Math.max(-MAX_EVENT, Math.min(MAX_EVENT, e.movementX));
-    let dy = Math.max(-MAX_EVENT, Math.min(MAX_EVENT, e.movementY));
-    const mag = Math.hypot(dx, dy);
-    if (mag > emaMag * OUTLIER_MULT && mag > 18) return;
-    emaMag += (Math.max(mag, 1) - emaMag) * 0.12;
-    if (Math.abs(mdx + dx) > MAX_FRAME) dx = Math.sign(dx) * Math.max(0, MAX_FRAME - Math.abs(mdx));
-    if (Math.abs(mdy + dy) > MAX_FRAME) dy = Math.sign(dy) * Math.max(0, MAX_FRAME - Math.abs(mdy));
+    if (performance.now() < skipUntil) return;
+    // movementX/Y are already relative; with unadjustedMovement they are raw.
+    const dx = Math.max(-MAX_EVENT, Math.min(MAX_EVENT, e.movementX || 0));
+    const dy = Math.max(-MAX_EVENT, Math.min(MAX_EVENT, e.movementY || 0));
+    if (dx === 0 && dy === 0) return;
     mdx += dx;
     mdy += dy;
   };
@@ -98,18 +104,16 @@ export function createInput(
   const onVisibility = () => {
     mdx = 0;
     mdy = 0;
-    if (document.hidden) skipUntil = performance.now() + 120;
+    if (document.hidden) skipUntil = performance.now() + 100;
   };
   const onLock = () => {
     const nowLocked = document.pointerLockElement === canvas;
     const wasLocked = locked;
     locked = nowLocked;
     if (nowLocked) {
-      skipNextMove = true;
       skipUntil = performance.now() + SKIP_MS_AFTER_LOCK;
       mdx = 0;
       mdy = 0;
-      emaMag = 8;
     }
     if (!nowLocked) {
       down.clear();
@@ -122,7 +126,7 @@ export function createInput(
 
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
-  window.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mousemove", onMouseMove);
   window.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("visibilitychange", onVisibility);
   canvas.addEventListener("pointerdown", onPointerDown);
@@ -162,7 +166,7 @@ export function createInput(
       }
     },
     requestLock: () => {
-      if (settings.cursorLocked) canvas.requestPointerLock();
+      if (settings.cursorLocked) requestRawPointerLock(canvas);
     },
     exitLock: () => {
       intentionalExit = true;
@@ -171,7 +175,7 @@ export function createInput(
     dispose: () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("wheel", onWheel);
       window.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("pointerdown", onPointerDown);
