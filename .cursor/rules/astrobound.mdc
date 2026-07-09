@@ -1,0 +1,20 @@
+---
+description: Astrobound project context — architecture, hotspots, changelog duty
+alwaysApply: true
+---
+
+# Astrobound agent rule
+
+You are working on **Astrobound**: a three.js + Rapier browser space exploration game (fly ships, land on procedural planets, walk surfaces).
+
+## Always
+
+- Read `AGENTS.md` for layout; use `docs/AGENT_CHANGELOG.md` as the living history.
+- After any non-trivial change, **append** a dated entry to `docs/AGENT_CHANGELOG.md` (summary + areas touched).
+- Classify gameplay assets with `src/ecs/gameEntity.ts` (`EntityKind`, `describeEntity`) and register camera blockers in `src/systems/cameraOccluders.ts` instead of ad-hoc ray hacks.
+- Do not reintroduce: Rapier `castRay` with `filterExcludeCollider` = active planet; opaque full-sphere water without depth mask; sky-shader horizon haze that draws a hard line.
+
+## Style
+
+- Double quotes; minimal comments; no unsolicited markdown docs beyond the changelog entry.
+- Don't commit or push unless the user asks.
