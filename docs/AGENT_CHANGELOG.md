@@ -4,6 +4,11 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-10 — 2× surface/liquid detail; procedural terrain rocks + ore
+- **Summary:** Near-surface terrain and liquid meshes use ~2× triangle count (`lodSegments` ×√2). Surface rocks are no longer GLB props — sparse boulder protrusions are baked into the heightfield (walkable mesh + collider, terrain palette). Ore nodules are unique procedural meshes per deposit (iron/copper metallic, crystal spikes + transmission, carbon lumps) with subdivision matched to planet facet size.
+- **Areas:** `src/worldgen/planetMesh.ts`, `src/worldgen/planet.ts`, `src/worldgen/meshBuffers.ts`, `src/worldgen/planetInstance.ts`, `src/visuals/planetRocks.ts`, `src/visuals/planetOre.ts`
+- **Notes:** Rock prop API kept empty for movement/occluder compatibility; ore remains separate collidable props.
+
 ### 2026-07-09 — Known systems in map (preview → teleport)
 - **Summary:** System map (**M**) lists known star systems as lightweight defs. Selecting one previews orbits/planets/star in the map without generating meshes. **Teleport** loads the system and moves the player; **Discover system** adds another known entry. Removed instant **B**-key jump.
 - **Areas:** `src/content/systems/catalog.ts`, `src/ui/systemMap.ts`, `src/ui/hud.css`, `src/main.ts`, `index.html`

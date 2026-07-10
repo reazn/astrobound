@@ -58,10 +58,10 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
   const atmosphere = createAtmosphere(planet, rng.world);
   lod.add(atmosphere.group);
 
-  const rocks = await createPlanetRocks(planet, createRng(`${def.seed}-rocks`).world);
+  const rocks = createPlanetRocks();
   lod.add(rocks.group);
 
-  const ore = await createPlanetOre(planet, createRng(`${def.seed}-ore`).world);
+  const ore = createPlanetOre(planet, createRng(`${def.seed}-ore`).world);
   lod.add(ore.group);
 
   // Match near-surface (high) terrain density so water facets match land.
@@ -152,14 +152,7 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
       if (highOwnsGeo && meshHigh.geometry !== midBuilt.geometry) {
         meshHigh.geometry.dispose();
       }
-      rocks.group.traverse((o) => {
-        const m = o as Mesh;
-        if (m.isMesh) {
-          m.geometry?.dispose();
-          const mats = Array.isArray(m.material) ? m.material : [m.material];
-          for (const mat of mats) mat?.dispose?.();
-        }
-      });
+      rocks.group.removeFromParent();
       ore.group.traverse((o) => {
         const m = o as Mesh;
         if (m.isMesh) {
@@ -168,6 +161,7 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
           for (const mat of mats) mat?.dispose?.();
         }
       });
+      ore.group.removeFromParent();
     },
     updateLod(camera) {
       const dist = camera.position.distanceTo(lod.position);

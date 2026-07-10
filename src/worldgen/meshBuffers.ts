@@ -175,10 +175,10 @@ export function buildMeshBuffers(
     if (seaLevel !== undefined && surfaceR < seaLevel) {
       col[0] *= 0.45; col[1] *= 0.5; col[2] *= 0.55;
     }
-    const rockBlend = Math.min(1, Math.max(0, (slope01 - 0.28) / 0.45));
-    col[0] += (rock[0] - col[0]) * rockBlend * 0.9;
-    col[1] += (rock[1] - col[1]) * rockBlend * 0.9;
-    col[2] += (rock[2] - col[2]) * rockBlend * 0.9;
+    const rockBlend = Math.min(1, Math.max(0, (slope01 - 0.22) / 0.4));
+    col[0] += (rock[0] - col[0]) * rockBlend * 0.95;
+    col[1] += (rock[1] - col[1]) * rockBlend * 0.95;
+    col[2] += (rock[2] - col[2]) * rockBlend * 0.95;
     if (heightNorm > 0.72) {
       const pk = (heightNorm - 0.72) / 0.28 * 0.55;
       col[0] += (peak[0] - col[0]) * pk;

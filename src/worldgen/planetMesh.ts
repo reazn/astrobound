@@ -47,7 +47,8 @@ export function geometryFromBuffers(
 }
 
 export function lodSegments(base: number): { high: number; mid: number; low: number } {
-  const high = Math.max(48, Math.round(base * 1.15));
+  // √2 on segments ≈ 2× triangle count (poly ∝ S²); liquid uses high.
+  const high = Math.max(48, Math.round(base * 1.15 * Math.SQRT2));
   return {
     high,
     mid: Math.max(28, Math.round(high / 5)),

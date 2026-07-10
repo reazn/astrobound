@@ -59,7 +59,11 @@ export function createPlanet(def: PlanetDef, rngWorld: RngStream): Planet {
   const ravine = createNoise3D(rngWorld);
   const ravineMask = createNoise3D(rngWorld);
   const basin = createNoise3D(rngWorld);
+  const rockField = createNoise3D(rngWorld);
+  const rockShape = createNoise3D(rngWorld);
+  const rockWarp = createNoise3D(rngWorld);
   const n = def.noise;
+  const rockAmp = 0.12;
 
   const heightAt = (nx: number, ny: number, nz: number): number => {
     const wf = n.warpFreq, wa = n.warpAmount;
@@ -93,8 +97,18 @@ export function createPlanet(def: PlanetDef, rngWorld: RngStream): Planet {
     const rav = ridged(ravine, wx, wy, wz, n.ravineFreq, 3);
     const ravines = rav * rav * rMask * clamp01(land + 0.35);
 
-    let v = land * 0.5 + mountains * 0.72 + hills * 0.32 - ravines * 0.28 - basinCarve;
-    v = Math.max(-1.15, Math.min(1.15, v));
+    // Sparse procedural boulders baked into the heightfield (walkable terrain).
+    const rf = n.baseFreq * 4.2;
+    const rw = 0.12 * rockWarp(nx * rf * 0.55, ny * rf * 0.55, nz * rf * 0.55);
+    const rx = nx + rw, ry = ny + rw * 0.7, rz = nz - rw * 0.5;
+    const rockN = rockField(rx * rf, ry * rf, rz * rf) * 0.5 + 0.5;
+    const rockPresence = Math.pow(clamp01((rockN - 0.7) / 0.3), 1.55);
+    const rockDetail = fbm(rockShape, rx * rf * 5.5, ry * rf * 5.5, rz * rf * 5.5, 1, 3, 0.5, 2.1);
+    const rockDry = clamp01(land + 0.28);
+    const rocks = rockPresence * (0.45 + 0.55 * (rockDetail * 0.5 + 0.5)) * rockDry * rockAmp;
+
+    let v = land * 0.5 + mountains * 0.72 + hills * 0.32 - ravines * 0.28 - basinCarve + rocks;
+    v = Math.max(-1.15, Math.min(1.25, v));
     v = Math.tanh(v * 0.95);
     return v * def.amplitude;
   };
@@ -108,7 +122,7 @@ export function createPlanet(def: PlanetDef, rngWorld: RngStream): Planet {
     radius: def.radius,
     amplitude: def.amplitude,
     minR: def.radius - def.amplitude * 1.15,
-    maxR: def.radius + def.amplitude * 1.15,
+    maxR: def.radius + def.amplitude * (1.15 + rockAmp),
     seaLevel,
     heightAt,
     surfaceRadius: (nx, ny, nz) => def.radius + heightAt(nx, ny, nz),
