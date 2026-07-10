@@ -4,13 +4,23 @@ import RAPIER from "@dimforge/rapier3d-compat";
 // center, applied analytically by the on-foot/ship systems, not by Rapier.
 // Only ONE planet trimesh is ever registered at a time (only one planet can be
 // walked on / landed on at once); swapping is cheap and keeps physics simple
-// even with multiple planets in the solar system.
+// even with multiple planets in the solar system. Cave interiors attach as
+// extra fixed trimeshes on the same body.
+
+export interface PhysicsTrimesh {
+  vertices: Float32Array;
+  indices: Uint32Array;
+}
 
 export interface Physics {
   rapier: typeof RAPIER;
   world: RAPIER.World;
   activeCollider: RAPIER.Collider | null;
-  setActivePlanet(vertices: Float32Array, indices: Uint32Array): RAPIER.Collider;
+  setActivePlanet(
+    vertices: Float32Array,
+    indices: Uint32Array,
+    extras?: readonly PhysicsTrimesh[],
+  ): RAPIER.Collider;
   step(): void;
 }
 
@@ -23,11 +33,20 @@ export async function initPhysics(): Promise<Physics> {
     rapier: RAPIER,
     world,
     activeCollider: null,
-    setActivePlanet(vertices, indices) {
+    setActivePlanet(vertices, indices, extras) {
       if (activeBody) world.removeRigidBody(activeBody);
       activeBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
       const desc = RAPIER.ColliderDesc.trimesh(vertices, indices);
       physics.activeCollider = world.createCollider(desc, activeBody);
+      if (extras) {
+        for (const extra of extras) {
+          if (extra.indices.length < 3) continue;
+          world.createCollider(
+            RAPIER.ColliderDesc.trimesh(extra.vertices, extra.indices),
+            activeBody,
+          );
+        }
+      }
       return physics.activeCollider;
     },
     step() {

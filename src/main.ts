@@ -113,7 +113,7 @@ async function main() {
 
   loading.setProgress(0.72, "Warming thrusters…");
   const physics = await initPhysics();
-  physics.setActivePlanet(home.colliderVertices, home.colliderIndices);
+  physics.setActivePlanet(home.colliderVertices, home.colliderIndices, home.extraColliders);
 
   const asteroidRng = createRng("asteroids-001").world;
   const charDef0 = characterById(settings.selectedCharacterId);
@@ -368,6 +368,18 @@ async function main() {
         getCenter: (out) => out.copy(c),
       });
     }
+    const caves = planet.caves;
+    for (let i = 0; i < caves.entrances.length; i++) {
+      const c = caves.entrances[i];
+      registerCameraOccluder({
+        desc: describeEntity(`cave-${planet.def.id}-${i}`, "rock", {
+          label: "Cave",
+          cameraRadius: 48,
+        }),
+        enabled: true,
+        getCenter: (out) => out.copy(c),
+      });
+    }
     registeredRockPlanetId = planet.def.id;
   };
   syncCameraOccluders(home);
@@ -455,7 +467,7 @@ async function main() {
     state.mode = "onFoot";
     state.currentPlanet = planet;
     state.dockBay = null;
-    physics.setActivePlanet(planet.colliderVertices, planet.colliderIndices);
+    physics.setActivePlanet(planet.colliderVertices, planet.colliderIndices, planet.extraColliders);
     activeColliderPlanetId = planet.def.id;
     syncCameraOccluders(planet);
   };
@@ -547,6 +559,7 @@ async function main() {
       physics.setActivePlanet(
         state.currentPlanet.colliderVertices,
         state.currentPlanet.colliderIndices,
+        state.currentPlanet.extraColliders,
       );
       activeColliderPlanetId = state.currentPlanet.def.id;
     }
@@ -614,7 +627,7 @@ async function main() {
       if (localMode) {
         const cp = state.currentPlanet;
         if (cp.def.id !== activeColliderPlanetId) {
-          physics.setActivePlanet(cp.colliderVertices, cp.colliderIndices);
+          physics.setActivePlanet(cp.colliderVertices, cp.colliderIndices, cp.extraColliders);
           activeColliderPlanetId = cp.def.id;
         }
         interpBody.lerpVectors(cp.prevSystemPosition, cp.systemPosition, alpha);
@@ -647,7 +660,11 @@ async function main() {
           ? focusPlanet
           : null);
       if (collidePlanet && collidePlanet.def.id !== activeColliderPlanetId) {
-        physics.setActivePlanet(collidePlanet.colliderVertices, collidePlanet.colliderIndices);
+        physics.setActivePlanet(
+          collidePlanet.colliderVertices,
+          collidePlanet.colliderIndices,
+          collidePlanet.extraColliders,
+        );
         activeColliderPlanetId = collidePlanet.def.id;
       }
       if (collidePlanet) {

@@ -6,9 +6,11 @@ import { createTerrainMaterial } from "../visuals/toonMaterial";
 import { createAtmosphere, type Atmosphere } from "../visuals/atmosphere";
 import { createPlanetRocks, type PlanetRocks } from "../visuals/planetRocks";
 import { createPlanetOre, type PlanetOre } from "../visuals/planetOre";
-import type { PlanetLiquidMesh } from "../visuals/planetLiquid";
+import { createPlanetCaves, type PlanetCaves } from "../visuals/planetCaves";
+import { createPlanetLiquid, type PlanetLiquidMesh } from "../visuals/planetLiquid";
 import { createPlanetRings, type PlanetRingsMesh } from "../visuals/planetRings";
 import type { PlanetDef } from "../content/planets/types";
+import type { PhysicsTrimesh } from "../engine/physics";
 
 export interface PlanetInstance {
   def: PlanetDef;
@@ -19,10 +21,12 @@ export interface PlanetInstance {
   atmosphere: Atmosphere;
   rocks: PlanetRocks;
   ore: PlanetOre;
+  caves: PlanetCaves;
   liquid: PlanetLiquidMesh | null;
   rings: PlanetRingsMesh | null;
   colliderVertices: Float32Array;
   colliderIndices: Uint32Array;
+  extraColliders: PhysicsTrimesh[];
   systemPosition: Vector3;
   prevSystemPosition: Vector3;
   dispose(): void;
@@ -47,18 +51,11 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
   const ore = await createPlanetOre(planet, createRng(`${def.seed}-ore`).world);
   lod.add(ore.group);
 
-  // Liquid is chunked inside terrainLod (same quadtree as land).
-  const liquid: PlanetLiquidMesh | null = terrainLod.hasLiquid
-    ? {
-      mesh: lod, // placeholder; visibility driven by terrainLod.updateLiquid
-      kind: def.liquid!.kind,
-      level: def.liquid!.level,
-      seaRadius: terrainLod.seaRadius,
-      update(_sun, _day, camPlanetLocal) {
-        terrainLod.updateLiquid(camPlanetLocal);
-      },
-    }
-    : null;
+  const caves = createPlanetCaves(planet, createRng(`${def.seed}-caves`).world);
+  lod.add(caves.group);
+
+  const liquid = createPlanetLiquid(planet);
+  if (liquid) lod.add(liquid.mesh);
 
   const rings = createPlanetRings(def.radius, def.rings ?? []);
   if (rings) lod.add(rings.group);
@@ -75,16 +72,29 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
     atmosphere,
     rocks,
     ore,
+    caves,
     liquid,
     rings,
     colliderVertices: terrainLod.colliderVertices,
     colliderIndices: terrainLod.colliderIndices,
+    extraColliders: caves.colliders,
     systemPosition: new Vector3(),
     prevSystemPosition: new Vector3(),
     dispose() {
       lod.removeFromParent();
       atmosphere.skyDome.removeFromParent();
       terrainLod.dispose();
+      caves.dispose();
+      if (liquid) {
+        liquid.mesh.traverse((o) => {
+          const m = o as Mesh;
+          if (m.isMesh) {
+            m.geometry?.dispose();
+            const mats = Array.isArray(m.material) ? m.material : [m.material];
+            for (const mat of mats) mat?.dispose?.();
+          }
+        });
+      }
       rocks.group.traverse((o) => {
         const m = o as Mesh;
         if (m.isMesh) {
@@ -107,6 +117,7 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
       const surface = (mode ?? "space") === "surface";
       rocks.group.visible = surface;
       ore.group.visible = surface;
+      caves.group.visible = surface;
     },
     setLodDebug(on) {
       terrainLod.setDebugVisuals(on);

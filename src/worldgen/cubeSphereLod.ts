@@ -117,12 +117,8 @@ function segsForDepth(depth: number): number {
   return 20;
 }
 
-function waveScaleForDepth(depth: number): number {
-  if (depth <= 7) return 0.2;
-  if (depth <= 9) return 0.4;
-  if (depth <= 11) return 0.6;
-  if (depth <= 13) return 0.85;
-  return 1;
+function waveScaleForDepth(_depth: number): number {
+  return 0.45;
 }
 
 /** Hard-coded distance → target tree depth, clamped to mode min/max. */
@@ -312,15 +308,10 @@ export function createCubeSphereLod(
   const viewDir = new Vector3();
   const toTile = new Vector3();
 
-  const hasLiquid = !!def.liquid;
-  const seaRadius = hasLiquid
-    ? Math.max(planet.minR + 40, planet.seaLevel) +
-      Math.max(8, planet.amplitude * 0.002)
-    : planet.radius;
+  const hasLiquid = false;
+  const seaRadius = planet.seaLevel;
   const isLava = def.liquid?.kind === "lava";
-  const waveAmp = hasLiquid
-    ? Math.max(isLava ? 4 : 8, planet.amplitude * (isLava ? 0.0012 : 0.002))
-    : 0;
+  const waveAmp = 0;
   const baseCol = hasLiquid
     ? hexRgb(def.liquid!.color)
     : ([0, 0, 0] as [number, number, number]);
@@ -349,14 +340,14 @@ export function createCubeSphereLod(
       vertexColors: true,
       transparent: true,
       opacity,
-      depthWrite: true,
+      depthWrite: false,
       depthTest: true,
       side: FrontSide,
       fog: false,
       gradientMap: toonGradient(),
       polygonOffset: true,
-      polygonOffsetFactor: -4,
-      polygonOffsetUnits: -4,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
     if (isLava) {
       liquidMat.emissive = new Color(def.liquid!.color);
@@ -384,11 +375,11 @@ export function createCubeSphereLod(
             vec3 n0 = r0 > 1e-5 ? transformed / r0 : vec3(0.0, 1.0, 0.0);
             float wScale = aWaveScale > 0.0 ? aWaveScale : 1.0;
             float amp = uWaveAmp * wScale;
-            float open = smoothstep(uSeaR - max(8.0, amp * 2.5), uSeaR + max(2.0, amp * 0.8), r0);
-            float freq = mix(4.0, 18.0, wScale);
-            float w = sin(n0.x * freq + n0.z * (freq * 0.78) + uWaveTime * 1.35)
-                    + sin(n0.y * (freq * 0.9) + n0.x * (freq * 0.6) - uWaveTime * 0.95) * 0.55;
-            transformed += n0 * (w * amp * open);
+            float open = smoothstep(uSeaR - max(14.0, amp * 6.0), uSeaR + max(1.0, amp * 0.4), r0);
+            float freq = mix(2.2, 5.5, wScale);
+            float w = sin(n0.x * freq + n0.z * (freq * 0.78) + uWaveTime * 0.55)
+                    + sin(n0.y * (freq * 0.9) + n0.x * (freq * 0.6) - uWaveTime * 0.38) * 0.35;
+            transformed += n0 * (w * amp * open * 0.55);
           }
           `,
         );
@@ -431,7 +422,7 @@ export function createCubeSphereLod(
         0.88,
         Math.max(0.75, (def.liquid!.opacity ?? 0.8) + 0.1),
       ),
-      depthWrite: true,
+      depthWrite: false,
       fog: false,
       gradientMap: toonGradient(),
     });
@@ -591,15 +582,17 @@ export function createCubeSphereLod(
     return true;
   };
 
-  const buildLiquidFor = (node: LodNode) => {
+  const buildLiquidFor = (node: LodNode, countBudget = true) => {
     if (!hasLiquid || !liquidMat) return;
     if (node.depth < minDepthCap) return;
     if (node.liquidMesh) {
       node.liquidMesh.visible = true;
       return;
     }
-    if (buildsThisFrame >= maxBuildsCap) return;
-    buildsThisFrame++;
+    if (countBudget) {
+      if (buildsThisFrame >= maxBuildsCap) return;
+      buildsThisFrame++;
+    }
     const buf = buildLiquidChunkBuffers(
       (nx, ny, nz) => planet.surfaceRadius(nx, ny, nz),
       seaRadius,
@@ -623,13 +616,14 @@ export function createCubeSphereLod(
     const waveAttr = new Float32Array(vertCount);
     waveAttr.fill(wScale);
     mesh.geometry.setAttribute("aWaveScale", new BufferAttribute(waveAttr, 1));
-    mesh.frustumCulled = true;
+    mesh.frustumCulled = false;
     mesh.renderOrder = 2;
     if (mesh.geometry.boundingSphere) {
       mesh.geometry.boundingSphere.center.copy(node.center);
       mesh.geometry.boundingSphere.radius = Math.max(
         mesh.geometry.boundingSphere.radius,
         node.cullR,
+        buf.boundRadius,
       );
     }
     node.liquidMesh = mesh;
@@ -640,11 +634,32 @@ export function createCubeSphereLod(
     if (node.mesh) {
       node.mesh.visible = true;
       applyDebugTint(node);
-      if (allowLiquid) buildLiquidFor(node);
+      if (allowLiquid) buildLiquidFor(node, false);
       return true;
     }
     if (buildsThisFrame >= maxBuildsCap) return false;
     buildsThisFrame++;
+    let segs = segsForDepth(node.depth);
+    {
+      const f = CUBE_FACES[node.face];
+      const cornerDir: [number, number, number] = [0, 0, 0];
+      const cornerR = (u: number, v: number) => {
+        const x = f.dir[0] + f.u[0] * u + f.v[0] * v;
+        const y = f.dir[1] + f.u[1] * u + f.v[1] * v;
+        const z = f.dir[2] + f.u[2] * u + f.v[2] * v;
+        spherify(x, y, z, cornerDir);
+        return planet.surfaceRadius(cornerDir[0], cornerDir[1], cornerDir[2]);
+      };
+      const r00 = cornerR(node.u0, node.v0);
+      const r10 = cornerR(node.u0 + node.size, node.v0);
+      const r01 = cornerR(node.u0, node.v0 + node.size);
+      const r11 = cornerR(node.u0 + node.size, node.v0 + node.size);
+      const rMin = Math.min(r00, r10, r01, r11);
+      const rMax = Math.max(r00, r10, r01, r11);
+      if (rMax - rMin > planet.amplitude * 0.12) {
+        segs = Math.min(segs + 6, 28);
+      }
+    }
     const buf = buildChunkBuffers(
       (nx, ny, nz) => planet.surfaceRadius(nx, ny, nz),
       planet.minR,
@@ -655,9 +670,14 @@ export function createCubeSphereLod(
       node.u0,
       node.v0,
       node.size,
-      segsForDepth(node.depth),
+      segs,
       planet.seaLevel,
       node.depth >= minDepthCap + 1,
+      {
+        biomeAt: (nx, ny, nz) => planet.biomeAt(nx, ny, nz),
+        biomeWeights: (nx, ny, nz) => planet.biomeWeights(nx, ny, nz),
+        colors: planet.biomeColors,
+      },
     );
     const mesh = new Mesh(
       makeGeometry(buf.positions, buf.normals, buf.colors),
@@ -678,7 +698,7 @@ export function createCubeSphereLod(
     chunkRoot.add(mesh);
     leafMeshes++;
     applyDebugTint(node);
-    if (allowLiquid) buildLiquidFor(node);
+    if (allowLiquid) buildLiquidFor(node, false);
     return true;
   };
 
@@ -1123,12 +1143,11 @@ export function createCubeSphereLod(
     updateLiquid(camPlanetLocal) {
       if (!hasLiquid) return;
       waveUniforms.uWaveTime.value = performance.now() * 0.001;
-      if (camPlanetLocal) {
-        const under = camPlanetLocal.length() < seaRadius - 0.4;
-        if (under) {
-          liquidRoot.visible = false;
-          if (liquidImpostor) liquidImpostor.visible = false;
-        }
+      if (!camPlanetLocal) return;
+      const under = camPlanetLocal.length() < seaRadius - 0.4;
+      if (under) {
+        liquidRoot.visible = false;
+        if (liquidImpostor) liquidImpostor.visible = false;
       }
     },
     setDebugVisuals(on) {

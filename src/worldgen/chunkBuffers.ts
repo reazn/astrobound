@@ -1,4 +1,5 @@
 import type { PlanetDef } from "../content/planets/types";
+import type { BiomeId, BiomeColors } from "../content/planets/biomes";
 import type { RampColors } from "./palette";
 
 // Mesh buffers for one cube-face UV patch (quadtree leaf). Pure typed arrays
@@ -20,6 +21,50 @@ export function spherify(x: number, y: number, z: number, out: [number, number, 
   out[2] = z * Math.sqrt(1 - x2 * 0.5 - y2 * 0.5 + (x2 * y2) / 3);
   const len = Math.hypot(out[0], out[1], out[2]) || 1;
   out[0] /= len; out[1] /= len; out[2] /= len;
+}
+
+export interface ChunkBiomeOpts {
+  biomeAt: (nx: number, ny: number, nz: number) => BiomeId;
+  biomeWeights?: (nx: number, ny: number, nz: number) => Partial<Record<BiomeId, number>>;
+  colors: BiomeColors;
+}
+
+function mixBiomeColor(
+  biome: ChunkBiomeOpts,
+  rx: number, ry: number, rz: number,
+  out: [number, number, number],
+) {
+  if (biome.biomeWeights) {
+    const w = biome.biomeWeights(rx, ry, rz);
+    let r = 0, g = 0, b = 0, sum = 0;
+    for (const id of Object.keys(w) as BiomeId[]) {
+      const wt = w[id] ?? 0;
+      if (wt < 0.01) continue;
+      const c = hexToRgb(biome.colors[id]);
+      r += c[0] * wt; g += c[1] * wt; b += c[2] * wt;
+      sum += wt;
+    }
+    if (sum > 1e-4) {
+      out[0] = r / sum; out[1] = g / sum; out[2] = b / sum;
+      return;
+    }
+  }
+  const bc = hexToRgb(biome.colors[biome.biomeAt(rx, ry, rz)]);
+  out[0] = bc[0]; out[1] = bc[1]; out[2] = bc[2];
+}
+
+function projectOnSurface(
+  surfaceRadius: (nx: number, ny: number, nz: number) => number,
+  ax: number, ay: number, az: number,
+  bx: number, by: number, bz: number,
+): [number, number, number] {
+  const mx = (ax + bx) * 0.5;
+  const my = (ay + by) * 0.5;
+  const mz = (az + bz) * 0.5;
+  const len = Math.hypot(mx, my, mz) || 1;
+  const nx = mx / len, ny = my / len, nz = mz / len;
+  const r = surfaceRadius(nx, ny, nz);
+  return [nx * r, ny * r, nz * r];
 }
 
 function sampleGradient(
@@ -83,16 +128,17 @@ export function buildChunkBuffers(
   segments: number,
   seaLevel?: number,
   withSkirts = true,
+  biome?: ChunkBiomeOpts,
 ): ChunkMeshBuffers {
   const face = CUBE_FACES[faceIndex];
   const S = Math.max(2, segments);
-  // Slight UV bleed so neighboring patches overlap and hide T-junction cracks.
   const pad = size / S * 0.4;
   const uPad = u0 - pad;
   const vPad = v0 - pad;
   const sizePad = size + pad * 2;
-  const sharedPos = new Float32Array((S + 1) * (S + 1) * 3);
-  const indices = new Uint32Array(S * S * 6);
+  const row = S + 1;
+  const gridN = row * row;
+  const sharedPos = new Float32Array(gridN * 3);
   const dir: [number, number, number] = [0, 0, 0];
   let vOff = 0;
 
@@ -111,20 +157,90 @@ export function buildChunkBuffers(
     }
   }
 
-  const row = S + 1;
+  const verts = new Float32Array((gridN + S * S * 5) * 3);
+  verts.set(sharedPos);
+  let vertCount = gridN;
+  const indices = new Uint32Array(S * S * 24);
   let iOff = 0;
+  const steepThresh = (maxR - minR) * 0.045;
+
+  const pushVert = (x: number, y: number, z: number): number => {
+    const i = vertCount++;
+    verts[i * 3] = x;
+    verts[i * 3 + 1] = y;
+    verts[i * 3 + 2] = z;
+    return i;
+  };
+
+  const emitTri = (a: number, b: number, c: number) => {
+    indices[iOff++] = a;
+    indices[iOff++] = b;
+    indices[iOff++] = c;
+  };
+
+  const radiusAt = (i: number) => Math.hypot(verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
+  const chord = (a: number, b: number) => {
+    const dx = verts[a * 3] - verts[b * 3];
+    const dy = verts[a * 3 + 1] - verts[b * 3 + 1];
+    const dz = verts[a * 3 + 2] - verts[b * 3 + 2];
+    return Math.hypot(dx, dy, dz);
+  };
+
   for (let j = 0; j < S; j++) {
     for (let i = 0; i < S; i++) {
       const aI = i + j * row;
       const bI = aI + 1;
       const cI = aI + row;
       const dI = cI + 1;
-      indices[iOff++] = aI;
-      indices[iOff++] = bI;
-      indices[iOff++] = dI;
-      indices[iOff++] = aI;
-      indices[iOff++] = dI;
-      indices[iOff++] = cI;
+      const rA = radiusAt(aI), rB = radiusAt(bI), rC = radiusAt(cI), rD = radiusAt(dI);
+      const rMin = Math.min(rA, rB, rC, rD);
+      const rMax = Math.max(rA, rB, rC, rD);
+      const maxDelta = rMax - rMin;
+      const avgChord = (chord(aI, bI) + chord(bI, dI) + chord(dI, cI) + chord(cI, aI)) * 0.25;
+      if (maxDelta > 0.75 * avgChord || maxDelta > steepThresh) {
+        const mAB = projectOnSurface(
+          surfaceRadius,
+          verts[aI * 3], verts[aI * 3 + 1], verts[aI * 3 + 2],
+          verts[bI * 3], verts[bI * 3 + 1], verts[bI * 3 + 2],
+        );
+        const mBD = projectOnSurface(
+          surfaceRadius,
+          verts[bI * 3], verts[bI * 3 + 1], verts[bI * 3 + 2],
+          verts[dI * 3], verts[dI * 3 + 1], verts[dI * 3 + 2],
+        );
+        const mDC = projectOnSurface(
+          surfaceRadius,
+          verts[dI * 3], verts[dI * 3 + 1], verts[dI * 3 + 2],
+          verts[cI * 3], verts[cI * 3 + 1], verts[cI * 3 + 2],
+        );
+        const mCA = projectOnSurface(
+          surfaceRadius,
+          verts[cI * 3], verts[cI * 3 + 1], verts[cI * 3 + 2],
+          verts[aI * 3], verts[aI * 3 + 1], verts[aI * 3 + 2],
+        );
+        const cx4 = (verts[aI * 3] + verts[bI * 3] + verts[cI * 3] + verts[dI * 3]) * 0.25;
+        const cy4 = (verts[aI * 3 + 1] + verts[bI * 3 + 1] + verts[cI * 3 + 1] + verts[dI * 3 + 1]) * 0.25;
+        const cz4 = (verts[aI * 3 + 2] + verts[bI * 3 + 2] + verts[cI * 3 + 2] + verts[dI * 3 + 2]) * 0.25;
+        const clen = Math.hypot(cx4, cy4, cz4) || 1;
+        const cnx = cx4 / clen, cny = cy4 / clen, cnz = cz4 / clen;
+        const cr = surfaceRadius(cnx, cny, cnz);
+        const iAB = pushVert(mAB[0], mAB[1], mAB[2]);
+        const iBD = pushVert(mBD[0], mBD[1], mBD[2]);
+        const iDC = pushVert(mDC[0], mDC[1], mDC[2]);
+        const iCA = pushVert(mCA[0], mCA[1], mCA[2]);
+        const iCtr = pushVert(cnx * cr, cny * cr, cnz * cr);
+        emitTri(aI, iAB, iCtr);
+        emitTri(iAB, bI, iCtr);
+        emitTri(bI, iBD, iCtr);
+        emitTri(iBD, dI, iCtr);
+        emitTri(dI, iDC, iCtr);
+        emitTri(iDC, cI, iCtr);
+        emitTri(cI, iCA, iCtr);
+        emitTri(iCA, aI, iCtr);
+      } else {
+        emitTri(aI, bI, dI);
+        emitTri(aI, dI, cI);
+      }
     }
   }
 
@@ -142,7 +258,7 @@ export function buildChunkBuffers(
     [1.0, peak],
   ];
 
-  const triCount = indices.length / 3;
+  const triCount = iOff / 3;
   const positions = new Float32Array(triCount * 9);
   const normals = new Float32Array(triCount * 9);
   const colors = new Float32Array(triCount * 9);
@@ -150,15 +266,14 @@ export function buildChunkBuffers(
   const col: [number, number, number] = [0, 0, 0];
   const mf = mottleFreq;
 
-  // Smooth vertex normals (averaged face normals) — flat shading reads as low-poly.
-  const vertN = new Float32Array(row * row * 3);
+  const vertN = new Float32Array(vertCount * 3);
   for (let t = 0; t < triCount; t++) {
     const i0 = indices[t * 3];
     const i1 = indices[t * 3 + 1];
     const i2 = indices[t * 3 + 2];
-    const ax = sharedPos[i0 * 3], ay = sharedPos[i0 * 3 + 1], az = sharedPos[i0 * 3 + 2];
-    const bx = sharedPos[i1 * 3], by = sharedPos[i1 * 3 + 1], bz = sharedPos[i1 * 3 + 2];
-    const cxp = sharedPos[i2 * 3], cyp = sharedPos[i2 * 3 + 1], czp = sharedPos[i2 * 3 + 2];
+    const ax = verts[i0 * 3], ay = verts[i0 * 3 + 1], az = verts[i0 * 3 + 2];
+    const bx = verts[i1 * 3], by = verts[i1 * 3 + 1], bz = verts[i1 * 3 + 2];
+    const cxp = verts[i2 * 3], cyp = verts[i2 * 3 + 1], czp = verts[i2 * 3 + 2];
     const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
     const e2x = cxp - ax, e2y = cyp - ay, e2z = czp - az;
     let nx = e1y * e2z - e1z * e2y;
@@ -168,7 +283,7 @@ export function buildChunkBuffers(
     vertN[i1 * 3] += nx; vertN[i1 * 3 + 1] += ny; vertN[i1 * 3 + 2] += nz;
     vertN[i2 * 3] += nx; vertN[i2 * 3 + 1] += ny; vertN[i2 * 3 + 2] += nz;
   }
-  for (let i = 0; i < row * row; i++) {
+  for (let i = 0; i < vertCount; i++) {
     const nx = vertN[i * 3], ny = vertN[i * 3 + 1], nz = vertN[i * 3 + 2];
     const nl = Math.hypot(nx, ny, nz) || 1;
     vertN[i * 3] = nx / nl;
@@ -183,13 +298,12 @@ export function buildChunkBuffers(
     const i0 = indices[t * 3];
     const i1 = indices[t * 3 + 1];
     const i2 = indices[t * 3 + 2];
-    const ax = sharedPos[i0 * 3], ay = sharedPos[i0 * 3 + 1], az = sharedPos[i0 * 3 + 2];
-    const bx = sharedPos[i1 * 3], by = sharedPos[i1 * 3 + 1], bz = sharedPos[i1 * 3 + 2];
-    const cxp = sharedPos[i2 * 3], cyp = sharedPos[i2 * 3 + 1], czp = sharedPos[i2 * 3 + 2];
+    const ax = verts[i0 * 3], ay = verts[i0 * 3 + 1], az = verts[i0 * 3 + 2];
+    const bx = verts[i1 * 3], by = verts[i1 * 3 + 1], bz = verts[i1 * 3 + 2];
+    const cxp = verts[i2 * 3], cyp = verts[i2 * 3 + 1], czp = verts[i2 * 3 + 2];
     const n0x = vertN[i0 * 3], n0y = vertN[i0 * 3 + 1], n0z = vertN[i0 * 3 + 2];
     const n1x = vertN[i1 * 3], n1y = vertN[i1 * 3 + 1], n1z = vertN[i1 * 3 + 2];
     const n2x = vertN[i2 * 3], n2y = vertN[i2 * 3 + 1], n2z = vertN[i2 * 3 + 2];
-    // Slope from face normal for rock blend (still uses geometric slope).
     const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
     const e2x = cxp - ax, e2y = cyp - ay, e2z = czp - az;
     let fnx = e1y * e2z - e1z * e2y;
@@ -211,20 +325,24 @@ export function buildChunkBuffers(
       Math.sin(my * mf * 0.11 + mx * mf * 0.07) * 0.3 +
       Math.sin((mx + mz) * mf * 0.18) * Math.cos(my * mf * 0.14) * 0.35;
 
-    sampleGradient(heightStops, heightNorm, col);
-    if (seaLevel !== undefined && surfaceR < seaLevel) {
-      col[0] *= 0.45; col[1] *= 0.5; col[2] *= 0.55;
+    if (biome) {
+      mixBiomeColor(biome, rx, ry, rz, col);
+    } else {
+      sampleGradient(heightStops, heightNorm, col);
+      if (seaLevel !== undefined && surfaceR < seaLevel) {
+        col[0] *= 0.45; col[1] *= 0.5; col[2] *= 0.55;
+      }
+      if (heightNorm > 0.7) {
+        const pk = (heightNorm - 0.7) / 0.3 * 0.55;
+        col[0] += (peak[0] - col[0]) * pk;
+        col[1] += (peak[1] - col[1]) * pk;
+        col[2] += (peak[2] - col[2]) * pk;
+      }
     }
     const rockBlend = Math.min(1, Math.max(0, (slope01 - 0.26) / 0.42));
     col[0] += (rock[0] - col[0]) * rockBlend * 0.9;
     col[1] += (rock[1] - col[1]) * rockBlend * 0.9;
     col[2] += (rock[2] - col[2]) * rockBlend * 0.9;
-    if (heightNorm > 0.7) {
-      const pk = (heightNorm - 0.7) / 0.3 * 0.55;
-      col[0] += (peak[0] - col[0]) * pk;
-      col[1] += (peak[1] - col[1]) * pk;
-      col[2] += (peak[2] - col[2]) * pk;
-    }
     const m = 1 + mottle * 0.14;
     col[0] *= m; col[1] *= m; col[2] *= m;
 
@@ -264,7 +382,6 @@ export function buildChunkBuffers(
     };
   }
 
-  // Vertical skirts hide T-junction cracks. Terrain-colored; single-sided.
   const skirtEdgeCount = S * 4;
   const skirtPositions = new Float32Array((triCount + skirtEdgeCount * 2) * 9);
   const skirtNormals = new Float32Array(skirtPositions.length);
@@ -277,6 +394,11 @@ export function buildChunkBuffers(
   const edgeColorAt = (iVert: number): [number, number, number] => {
     const ax = sharedPos[iVert * 3], ay = sharedPos[iVert * 3 + 1], az = sharedPos[iVert * 3 + 2];
     const surfaceR = Math.hypot(ax, ay, az) || 1;
+    const rx = ax / surfaceR, ry = ay / surfaceR, rz = az / surfaceR;
+    if (biome) {
+      mixBiomeColor(biome, rx, ry, rz, col);
+      return [col[0], col[1], col[2]];
+    }
     const heightNorm = (surfaceR - minR) * invRange;
     sampleGradient(heightStops, heightNorm, col);
     if (seaLevel !== undefined && surfaceR < seaLevel) {
@@ -367,16 +489,17 @@ export function buildLiquidChunkBuffers(
   const sharedPos = new Float32Array((S + 1) * (S + 1) * 3);
   const depths = new Float32Array((S + 1) * (S + 1));
   const dir: [number, number, number] = [0, 0, 0];
-  const bury = Math.max(40, waveAmp * 3.5);
+  const bury = Math.max(18, waveAmp * 2.2);
   let vOff = 0;
   let dOff = 0;
   let maxDepth = 1;
   let anyWater = false;
+  const pad = (size / S) * 0.4;
 
   for (let j = 0; j <= S; j++) {
-    const b = v0 + (j / S) * size;
+    const b = v0 - pad + (j / S) * (size + pad * 2);
     for (let i = 0; i <= S; i++) {
-      const a = u0 + (i / S) * size;
+      const a = u0 - pad + (i / S) * (size + pad * 2);
       const cx = face.dir[0] + face.u[0] * a + face.v[0] * b;
       const cy = face.dir[1] + face.u[1] * a + face.v[1] * b;
       const cz = face.dir[2] + face.u[2] * a + face.v[2] * b;
@@ -386,7 +509,7 @@ export function buildLiquidChunkBuffers(
       if (depth > maxDepth) maxDepth = depth;
       if (depth > -bury) anyWater = true;
       const r = depth < 0
-        ? seaRadius - Math.min(bury, -depth * 0.35 + waveAmp * 1.2)
+        ? seaRadius - Math.min(bury, -depth * 0.35 + waveAmp * 0.6)
         : seaRadius;
       sharedPos[vOff++] = dir[0] * r;
       sharedPos[vOff++] = dir[1] * r;
@@ -405,7 +528,6 @@ export function buildLiquidChunkBuffers(
       const cI = aI + row;
       const dI = cI + 1;
       const dA = depths[aI], dB = depths[bI], dC = depths[cI], dD = depths[dI];
-      // Keep facet if any corner is water or shore fringe.
       if (dA > -bury || dB > -bury || dD > -bury) {
         triIdx.push(aI, bI, dI);
       }
@@ -479,8 +601,8 @@ export function buildLiquidChunkBuffers(
     normals,
     colors,
     center: [cx, cy, cz],
-    boundRadius: Math.sqrt(maxD2) * 1.08,
-    cullRadius: Math.sqrt(maxD2) * 1.08,
+    boundRadius: Math.sqrt(maxD2) * 1.2 + bury + waveAmp * 2,
+    cullRadius: Math.sqrt(maxD2) * 1.2 + bury + waveAmp * 2,
   };
 }
 

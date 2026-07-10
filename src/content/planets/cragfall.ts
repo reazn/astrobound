@@ -6,9 +6,10 @@ export const CRAGFALL: PlanetDef = {
   id: "cragfall",
   name: "Cragfall",
   seed: "cragfall-001",
+  climate: "temperate",
   radius: 28000,
   faceSegments: 64,
-  amplitude: 5200,
+  amplitude: 2800,
   noise: DEFAULT_NOISE,
   palette: {
     atmosphere: "#6fa8d6",
@@ -24,7 +25,7 @@ export const CRAGFALL: PlanetDef = {
   cloudCoverage: 0.58,
   liquid: {
     kind: "water",
-    level: -280,
+    level: -520,
     color: "#1e6f92",
     opacity: 0.82,
   },

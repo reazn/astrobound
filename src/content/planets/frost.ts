@@ -6,9 +6,10 @@ export const FROST: PlanetDef = {
   id: "frost",
   name: "Frost",
   seed: "frost-039",
+  climate: "ice",
   radius: 52000,
   faceSegments: 64,
-  amplitude: 6200,
+  amplitude: 3200,
   noise: { ...DEFAULT_NOISE, mountainFreq: 1.05, terraceSteps: 5, baseOctaves: 6 },
   palette: {
     atmosphere: "#bcd8ea",
@@ -24,7 +25,7 @@ export const FROST: PlanetDef = {
   cloudCoverage: 0.38,
   liquid: {
     kind: "water",
-    level: -480,
+    level: -700,
     color: "#5aa0c4",
     opacity: 0.8,
   },

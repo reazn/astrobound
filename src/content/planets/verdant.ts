@@ -6,9 +6,10 @@ export const VERDANT: PlanetDef = {
   id: "verdant",
   name: "Verdant",
   seed: "verdant-027",
+  climate: "oasis",
   radius: 42000,
   faceSegments: 64,
-  amplitude: 5600,
+  amplitude: 3000,
   noise: { ...DEFAULT_NOISE, baseFreq: 0.58, mountainFreq: 1.0, baseOctaves: 6 },
   palette: {
     atmosphere: "#7bd6a0",
@@ -24,7 +25,7 @@ export const VERDANT: PlanetDef = {
   cloudCoverage: 0.68,
   liquid: {
     kind: "water",
-    level: -400,
+    level: -640,
     color: "#146878",
     opacity: 0.84,
   },

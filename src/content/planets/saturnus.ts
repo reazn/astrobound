@@ -6,6 +6,7 @@ export const SATURNUS: PlanetDef = {
   id: "saturnus",
   name: "Saturnus",
   seed: "saturnus-001",
+  climate: "gas_giant",
   radius: 84000,
   faceSegments: 64,
   amplitude: 2800,

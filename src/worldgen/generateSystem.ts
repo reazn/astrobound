@@ -10,6 +10,7 @@ import type {
   OrbitElements,
 } from "../content/planets/types";
 import type { ClimateKind, PlanetMeta } from "../content/planets/meta";
+import { terrainForClimate, biomeColorsForClimate } from "../content/planets/biomes";
 
 // Procedural star system: star type → climate weights → 1–10 spaced planets
 // with temperature/mass metadata. Orbits never overlap (SMA + padding).
@@ -174,28 +175,28 @@ function noiseFor(climate: ClimateKind, rng: RngStream): PlanetNoise {
 function liquidFor(climate: ClimateKind, rng: RngStream): PlanetLiquid | undefined {
   if (climate === "scorched") {
     return rng() < 0.7
-      ? { kind: "lava", level: rngRange(rng, -700, -200), color: "#ff6a1a", opacity: 0.9 }
+      ? { kind: "lava", level: rngRange(rng, -800, -400), color: "#ff6a1a", opacity: 0.9 }
       : undefined;
   }
   if (climate === "arid") {
-    return rng() < 0.25
-      ? { kind: "water", level: rngRange(rng, -1000, -500), color: "#2a6a7a", opacity: 0.7 }
+    return rng() < 0.2
+      ? { kind: "water", level: rngRange(rng, -900, -550), color: "#2a6a7a", opacity: 0.7 }
       : undefined;
   }
   if (climate === "gas_giant") return undefined;
   if (climate === "ice") {
     return {
-      kind: "water", level: rngRange(rng, -600, -200), color: "#5aa0c4", opacity: 0.78,
+      kind: "water", level: rngRange(rng, -850, -500), color: "#5aa0c4", opacity: 0.78,
     };
   }
   if (climate === "oceanic") {
     return {
-      kind: "water", level: rngRange(rng, -200, 200), color: "#146878", opacity: 0.86,
+      kind: "water", level: rngRange(rng, -450, -150), color: "#146878", opacity: 0.86,
     };
   }
   return {
     kind: "water",
-    level: rngRange(rng, -600, -200),
+    level: rngRange(rng, -750, -420),
     color: climate === "oasis" ? "#146878" : "#1e6f92",
     opacity: 0.82,
   };
@@ -265,8 +266,8 @@ function buildPlanet(
 
   const radius = radiusFor(climate, rng);
   const amplitude = climate === "gas_giant"
-    ? rngRange(rng, 2000, 4000)
-    : rngRange(rng, 3500, 7000);
+    ? rngRange(rng, 1200, 2400)
+    : rngRange(rng, 1800, 3400);
   const density = climate === "gas_giant"
     ? rngRange(rng, 0.15, 0.45)
     : rngRange(rng, 0.7, 1.4);
@@ -308,6 +309,7 @@ function buildPlanet(
     id: `${seed}-p${index}`,
     name: planetName(rng, index),
     seed: `${seed}-planet-${index}`,
+    climate,
     radius,
     faceSegments: 64,
     amplitude,
@@ -324,6 +326,8 @@ function buildPlanet(
     liquid: liquidFor(climate, rng),
     rings: ringsFor(climate, rng),
     orbit,
+    terrain: terrainForClimate(climate),
+    biomes: biomeColorsForClimate(climate),
     meta,
   };
 }

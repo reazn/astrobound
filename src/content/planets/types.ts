@@ -1,12 +1,12 @@
-// Data shapes for a planet. Planets are pure data — worldgen/visuals read these.
-// Adding a planet means one new file + one registry line.
+import type { ClimateKind, PlanetMeta } from "./meta";
+import type { BiomeColors, TerrainProfile } from "./biomes";
 
 export interface PlanetPalette {
-  atmosphere: string; // rim glow / sky tint
+  atmosphere: string;
   lowland: string;
   mid: string;
   highland: string;
-  rock: string; // steep-slope blend
+  rock: string;
   peak: string;
 }
 
@@ -27,10 +27,9 @@ export interface PlanetNoise {
   mottleFreq: number;
 }
 
-// Elliptical (Kepler) orbital elements around the star.
 export interface OrbitElements {
-  semiMajorAxis: number; // system units
-  eccentricity: number; // 0 = circular
+  semiMajorAxis: number;
+  eccentricity: number;
   periodSeconds: number;
   inclinationDeg: number;
   argPeriapsisDeg: number;
@@ -41,13 +40,11 @@ export type LiquidKind = "water" | "lava";
 
 export interface PlanetLiquid {
   kind: LiquidKind;
-  // Height offset from planet.radius. Negative fills basins; 0 ≈ mean sea level.
   level: number;
   color: string;
-  opacity: number; // 0..1 surface alpha
+  opacity: number;
 }
 
-// Planetary ring band. Scales are multipliers of planet.radius.
 export interface PlanetRingBand {
   innerScale: number;
   outerScale: number;
@@ -67,11 +64,15 @@ export interface PlanetDef {
   atmosphereThickness: number;
   fogNear: number;
   fogFar: number;
-  cloudCoverage: number; // 0..1, 0 disables clouds
+  cloudCoverage: number;
   liquid?: PlanetLiquid;
   rings?: readonly PlanetRingBand[];
   orbit: OrbitElements;
   hasStation?: boolean;
-  // Optional procedural metadata (handcrafted planets may omit).
-  meta?: import("./meta").PlanetMeta;
+  meta?: PlanetMeta;
+  terrain?: TerrainProfile;
+  biomes?: BiomeColors;
+  climate?: ClimateKind;
 }
+
+export type { BiomeColors, TerrainProfile, ClimateKind };

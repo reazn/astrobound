@@ -4,6 +4,21 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-10 — Restore full-sphere water + gentler terrain
+- **Summary:** Chunked LOD water still failed near-camera — switched back to `createPlanetLiquid` (continuous surface, quiet waves, `depthWrite:false`). Disabled chunk liquid path. Compressed heightfield (lower feature gains, earlier soft-clamp) and cut planet amplitudes ~half so highs/lows are milder.
+- **Areas:** `src/visuals/planetLiquid.ts`, `src/worldgen/{planetInstance,cubeSphereLod,planet,generateSystem}.ts`, `src/content/planets/{cragfall,verdant,ember,frost}.ts`
+- **Notes:** Sea levels moderated (~-520..-700) with the lower amplitude so lakes remain without drowning the globe.
+
+### 2026-07-10 — Water fix, biome blend, enterable caverns
+- **Summary:** Fixed chunked water (seams, over-wave, near-camera invisibility via `depthWrite:false` + UV pad + unified wave scale + seaRadius=seaLevel). Lowered sea levels. Soft `biomeWeights` color mix removes hard height bands. Added SDF caverns with multi-chamber layouts + lava pools and Rapier extra trimeshes.
+- **Areas:** `src/worldgen/{cubeSphereLod,chunkBuffers,planet,planetInstance,marchingCubes,generateSystem}.ts`, `src/visuals/planetCaves.ts`, `src/engine/physics.ts`, `src/content/planets/*`, `src/main.ts`
+- **Notes:** Look for dark cave-mouth pits; Ember has more lava caverns. Water coverage is intentionally lower.
+
+### 2026-07-10 — Steep-quad subdivision + biome chunk colors
+- **Summary:** Heightfield chunks now mid-edge+center-subdivide steep quads (no stretched cliff tris) and optionally color by `biomeAt`. LOD builds pass planet biomes and bump segment count on steep UV patches. Handcrafted + procedural planets set `climate` / `terrain` / `biomes`.
+- **Areas:** `src/worldgen/chunkBuffers.ts`, `src/worldgen/cubeSphereLod.ts`, `src/worldgen/generateSystem.ts`, `src/content/planets/{cragfall,verdant,frost,ember,saturnus}.ts`
+- **Notes:** Skirts still use the original grid verts only.
+
 ### 2026-07-10 — Massive LOD 1/2 rings + inner-first fill
 - **Summary:** LOD 1 looked unchanged because depth-11 tiles couldn’t fill a wide ring under the leaf budget. Surface is now **3 bands**: LOD0 depth12 @160u, **LOD1 depth10 @14km**, **LOD2 depth8 @40km**. Splits fill LOD 0 → 1 → 2 in order; leaf/build caps raised.
 - **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/ui/lodDebugLegend.ts`

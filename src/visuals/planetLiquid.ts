@@ -74,7 +74,7 @@ function buildLiquidGeometry(
   let dOff = 0;
   let maxDepth = 1;
   // Keep a land fringe so waves lifting the surface don't open a gap at shore.
-  const bury = Math.max(40, waveAmp * 3.5);
+  const bury = Math.max(12, waveAmp * 2.5);
   const keepMin = -bury;
 
   for (const face of FACES) {
@@ -92,7 +92,7 @@ function buildLiquidGeometry(
         if (depth > maxDepth) maxDepth = depth;
         // Pull land-fringe verts slightly into the ground so waves can't lift a gap.
         const r = depth < 0
-          ? seaRadius - Math.min(bury, -depth * 0.35 + waveAmp * 1.2)
+          ? seaRadius - Math.min(bury, -depth * 0.35 + waveAmp * 0.5)
           : seaRadius;
         shared[vOff++] = dir[0] * r;
         shared[vOff++] = dir[1] * r;
@@ -204,8 +204,8 @@ export function createPlanetLiquid(
   const liq = planet.def.liquid;
   if (!liq) return null;
 
-  // Sit clearly above the basin floor so it wins the depth test vs terrain.
-  const seaRadius = Math.max(planet.minR + 40, planet.seaLevel) + Math.max(8, planet.amplitude * 0.002);
+  // Slight lift above seaLevel so the surface wins depth vs terrain at the shore.
+  const seaRadius = planet.seaLevel + Math.max(1.5, planet.amplitude * 0.0004);
   const isLava = liq.kind === "lava";
   const base = hexRgb(liq.color);
   const deep: [number, number, number] = isLava
@@ -213,8 +213,8 @@ export function createPlanetLiquid(
     : lerp3(base, [0.04, 0.1, 0.16], 0.75);
   const foam = lerp3(base, isLava ? [1, 0.85, 0.35] : [0.78, 0.92, 1], 0.6);
 
-  const segs = segments ?? Math.max(28, Math.min(72, Math.round(planet.def.faceSegments)));
-  const waveAmp = Math.max(isLava ? 4 : 8, planet.amplitude * (isLava ? 0.0012 : 0.002));
+  const segs = segments ?? Math.max(36, Math.min(80, Math.round(planet.def.faceSegments * 1.1)));
+  const waveAmp = Math.max(isLava ? 0.8 : 1.1, planet.amplitude * (isLava ? 0.00022 : 0.00028));
   const geometry = buildLiquidGeometry(
     planet, seaRadius, segs, base, deep, foam, isLava, waveAmp,
   );
@@ -233,21 +233,19 @@ export function createPlanetLiquid(
     vertexColors: true,
     transparent: true,
     opacity,
-    depthWrite: true,
+    depthWrite: false,
     depthTest: true,
     side: FrontSide,
     fog: false,
     gradientMap: toonGradient(),
     polygonOffset: true,
-    polygonOffsetFactor: -4,
-    polygonOffsetUnits: -4,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
   });
   if (isLava) {
     mat.emissive = new Color(liq.color);
     mat.emissiveIntensity = 0.45;
   }
-  // Cheap radial ripple — two sines, no textures. Keeps MeshToon + log-depth.
-  // Waves fade out near/under sea radius so the buried shore fringe stays put.
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uWaveTime = waveUniforms.uWaveTime;
     shader.uniforms.uWaveAmp = waveUniforms.uWaveAmp;
@@ -267,15 +265,15 @@ export function createPlanetLiquid(
         {
           float r0 = length(transformed);
           vec3 n0 = r0 > 1e-5 ? transformed / r0 : vec3(0.0, 1.0, 0.0);
-          float open = smoothstep(uSeaR - max(8.0, uWaveAmp * 2.5), uSeaR + max(2.0, uWaveAmp * 0.8), r0);
-          float w = sin(n0.x * 18.0 + n0.z * 14.0 + uWaveTime * 1.35)
-                  + sin(n0.y * 16.0 + n0.x * 11.0 - uWaveTime * 0.95) * 0.55;
-          transformed += n0 * (w * uWaveAmp * open);
+          float open = smoothstep(uSeaR - max(12.0, uWaveAmp * 5.0), uSeaR + max(1.0, uWaveAmp * 0.35), r0);
+          float w = sin(n0.x * 3.2 + n0.z * 2.6 + uWaveTime * 0.45)
+                  + sin(n0.y * 2.8 + n0.x * 2.1 - uWaveTime * 0.32) * 0.3;
+          transformed += n0 * (w * uWaveAmp * open * 0.5);
         }
         `,
       );
   };
-  mat.customProgramCacheKey = () => `liquid-wave-v2-${isLava ? "lava" : "water"}`;
+  mat.customProgramCacheKey = () => `liquid-wave-v3-${isLava ? "lava" : "water"}`;
 
   const mesh = new Mesh(geometry, mat);
   mesh.renderOrder = 2;

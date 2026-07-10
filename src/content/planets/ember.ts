@@ -6,9 +6,10 @@ export const EMBER: PlanetDef = {
   id: "ember",
   name: "Ember",
   seed: "ember-014",
+  climate: "scorched",
   radius: 13000,
   faceSegments: 64,
-  amplitude: 4200,
+  amplitude: 2400,
   noise: { ...DEFAULT_NOISE, mountainFreq: 1.55, maskFreq: 0.58, baseFreq: 0.78 },
   palette: {
     atmosphere: "#e08a55",
@@ -24,7 +25,7 @@ export const EMBER: PlanetDef = {
   cloudCoverage: 0,
   liquid: {
     kind: "lava",
-    level: -360,
+    level: -580,
     color: "#ff6a1a",
     opacity: 0.9,
   },
