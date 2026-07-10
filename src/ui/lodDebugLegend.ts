@@ -1,16 +1,13 @@
 import {
-  SURFACE_LOD,
-  SPACE_LOD,
-  LOD_STEP,
+  LOD_BANDS,
   lodDebugColorHex,
-  lodRingOuterRadius,
+  lodIndexOuterRadius,
+  lodIndexInnerRadius,
   treeDepthToLod,
-  lodToTreeDepth,
-  type LodViewMode,
   type CubeSphereLodDebug,
 } from "../worldgen/cubeSphereLod";
 
-// On-screen LOD key (L). Uses standard numbering: LOD 0 = finest.
+// On-screen LOD key (L). Always lists every hard-coded LOD_BANDS entry.
 
 export interface LodDebugLegend {
   setVisible(on: boolean): void;
@@ -36,44 +33,36 @@ export const createLodDebugLegend = (): LodDebugLegend => {
   list.className = "sb-lod-legend-list";
   root.appendChild(list);
 
-  const hint = document.createElement("div");
-  hint.className = "sb-lod-legend-hint";
-  hint.textContent = "Say e.g. “LOD 2 denser” or “add a step between LOD 1–2”";
-  root.appendChild(hint);
-
   document.body.appendChild(root);
 
-  let lastMode: LodViewMode | "" = "";
-  let lastMin = -1;
-  let lastMax = -1;
+  let built = false;
 
-  const rebuildRows = (mode: LodViewMode, minDepth: number, maxDepth: number, fineR: number) => {
+  const rebuildRows = () => {
     list.replaceChildren();
-    const maxLod = treeDepthToLod(minDepth, maxDepth);
-    for (let lod = 0; lod <= maxLod; lod++) {
-      const treeDepth = lodToTreeDepth(lod, maxDepth);
+    const last = LOD_BANDS.length - 1;
+    for (const band of LOD_BANDS) {
       const row = document.createElement("div");
       row.className = "sb-lod-legend-row";
-      row.dataset.lod = String(lod);
+      row.dataset.lod = String(band.lod);
 
       const swatch = document.createElement("span");
       swatch.className = "sb-lod-legend-swatch";
-      swatch.style.background = lodDebugColorHex(lod);
+      swatch.style.background = lodDebugColorHex(band.lod);
 
       const num = document.createElement("span");
       num.className = "sb-lod-legend-num";
-      num.textContent = `LOD ${lod}`;
+      num.textContent = `LOD ${band.lod}`;
 
       const meta = document.createElement("span");
       meta.className = "sb-lod-legend-meta";
-      const outer = lodRingOuterRadius(fineR, maxDepth, treeDepth);
-      const inner = lod === 0 ? 0 : lodRingOuterRadius(fineR, maxDepth, lodToTreeDepth(lod - 1, maxDepth));
-      if (lod === 0) {
-        meta.textContent = `finest · 0–${Math.round(outer)}u`;
-      } else if (lod === maxLod) {
-        meta.textContent = `coarsest · ${Math.round(inner)}u+`;
+      const inner = lodIndexInnerRadius(band.lod);
+      const outer = lodIndexOuterRadius(band.lod);
+      if (band.lod === 0) {
+        meta.textContent = `depth ${band.depth} · 0–${Math.round(outer)}u`;
+      } else if (band.lod === last) {
+        meta.textContent = `depth ${band.depth} · ${Math.round(inner)}u+`;
       } else {
-        meta.textContent = `${Math.round(inner)}–${Math.round(outer)}u`;
+        meta.textContent = `depth ${band.depth} · ${Math.round(inner)}–${Math.round(outer)}u`;
       }
 
       row.append(swatch, num, meta);
@@ -82,38 +71,29 @@ export const createLodDebugLegend = (): LodDebugLegend => {
 
     const note = document.createElement("div");
     note.className = "sb-lod-legend-note";
-    if (mode === "surface") {
-      note.textContent = `Surface LOD 0–${maxLod} · step ×${LOD_STEP} · coarser than LOD ${maxLod} = space-only`;
-    } else {
-      note.textContent = `Space LOD 0–${maxLod} · step ×${LOD_STEP}`;
-    }
+    note.textContent = `${LOD_BANDS.length} hard-coded bands · edit LOD_BANDS in cubeSphereLod.ts`;
     list.appendChild(note);
+    built = true;
   };
 
   return {
     setVisible(on) {
       root.hidden = !on;
+      if (on && !built) rebuildRows();
     },
     update(dbg) {
       if (root.hidden || !dbg) return;
-      const cfg = dbg.mode === "surface" ? SURFACE_LOD : SPACE_LOD;
-      const minD = cfg.minDepth;
-      const maxD = cfg.maxDepth;
-      if (dbg.mode !== lastMode || minD !== lastMin || maxD !== lastMax) {
-        lastMode = dbg.mode;
-        lastMin = minD;
-        lastMax = maxD;
-        rebuildRows(dbg.mode, minD, maxD, dbg.fineRadius);
-      }
+      if (!built) rebuildRows();
 
-      const underLod = dbg.lodUnderCam ?? treeDepthToLod(dbg.depthUnderCam, maxD);
+      const underLod = dbg.lodUnderCam ?? treeDepthToLod(dbg.depthUnderCam);
       for (const row of list.querySelectorAll<HTMLElement>(".sb-lod-legend-row")) {
         row.classList.toggle("is-underfoot", Number(row.dataset.lod) === underLod);
       }
 
+      const band = LOD_BANDS[Math.min(underLod, LOD_BANDS.length - 1)];
       const ring = underLod === 0
-        ? `0–${Math.round(dbg.fineRadius)}u`
-        : `~${Math.round(lodRingOuterRadius(dbg.fineRadius, maxD, lodToTreeDepth(underLod, maxD)))}u band`;
+        ? `0–${Math.round(band.outer)}u`
+        : `${Math.round(lodIndexInnerRadius(underLod))}–${Number.isFinite(band.outer) ? Math.round(band.outer) : "∞"}u`;
       live.innerHTML =
         `<b>Underfoot LOD ${underLod}</b>`
         + ` · ${dbg.mode}`

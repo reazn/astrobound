@@ -975,11 +975,3 @@
   color: var(--hud-muted);
   line-height: 1.35;
 }
-
-.sb-lod-legend-hint {
-  margin-top: 8px;
-  font-family: var(--hud-font);
-  font-size: 10px;
-  color: rgba(200, 220, 240, 0.45);
-  line-height: 1.35;
-}

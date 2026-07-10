@@ -1,44 +1,78 @@
 import {
-  Group, Mesh, BufferGeometry, BufferAttribute, Vector3, Color, FrontSide, BackSide,
-  SphereGeometry, MeshToonMaterial, MeshBasicMaterial, Frustum, Matrix4, Sphere,
-  type Camera, type Material,
+  Group,
+  Mesh,
+  BufferGeometry,
+  BufferAttribute,
+  Vector3,
+  Color,
+  FrontSide,
+  SphereGeometry,
+  MeshToonMaterial,
+  MeshBasicMaterial,
+  Frustum,
+  Matrix4,
+  Sphere,
+  type Camera,
+  type Material,
 } from "three";
 import type { Planet } from "./planet";
-import { buildChunkBuffers, buildLiquidChunkBuffers, CUBE_FACES, spherify } from "./chunkBuffers";
+import {
+  buildChunkBuffers,
+  buildLiquidChunkBuffers,
+  CUBE_FACES,
+  spherify,
+} from "./chunkBuffers";
 import { buildPlanetMeshAsync, geometryFromBuffers } from "./planetMesh";
 import { buildMeshBuffers } from "./meshBuffers";
 import type { PlanetDef } from "../content/planets/types";
 import { toonGradient } from "../visuals/toonMaterial";
 
 // Player-centered cube-sphere LOD.
-// Sphere around the player: finest in a core, then gradual falloff.
-// Coarse depths ≤7 are space-only — on-planet never drops that low.
+// All distance → depth steps are hard-coded in LOD_BANDS (no geometric falloff).
 
 export type LodViewMode = "surface" | "space";
 
 const IMPOSTOR_SEGS = 40;
 const COLLIDER_SEGS = 48;
 const CHUNK_RANGE_MULT = 6;
-/** Distance multiplier per LOD step. ~1.55 keeps close-up tile sizes closer. */
-export const LOD_STEP = 1.55;
-const LOG_LOD_STEP = Math.log(LOD_STEP);
+
+export interface LodBand {
+  /** Display / debug index. 0 = finest. */
+  lod: number;
+  /** Quadtree depth for this band. */
+  depth: number;
+  /** Outer radius (player-local units). Inclusive; last band uses Infinity. */
+  outer: number;
+}
 
 /**
- * Surface: depths 8..15 (8 steps). Extra mid/far rings; floor raised so
- * distant mountains stay denser. Depths ≤7 reserved for space/impostor.
+ * Hard-coded concentric LOD ladder. Edit these numbers to tune.
+ * LOD 0 = underfoot finest; higher lod = farther / coarser.
  */
+export const LOD_BANDS: readonly LodBand[] = [
+  { lod: 0, depth: 10, outer: 100 },
+  { lod: 1, depth: 9, outer: 300 },
+  { lod: 2, depth: 8, outer: 1000 },
+  { lod: 3, depth: 7, outer: 6000 },
+  { lod: 4, depth: 6, outer: 40000 },
+  { lod: 5, depth: 5, outer: 100000 },
+  { lod: 6, depth: 4, outer: Number.POSITIVE_INFINITY },
+];
+
+/** @deprecated kept as alias — prefer LOD_BANDS[0].outer */
+export const LOD_STEP = 1;
+
 export const SURFACE_LOD = {
-  maxDepth: 15,
-  minDepth: 8,
-  maxLeaves: 640,
-  maxSplits: 8,
-  maxMerges: 16,
-  maxBuilds: 16,
-  fineRadius: 200,
+  maxDepth: 12,
+  minDepth: 3,
+  maxLeaves: 5000,
+  maxSplits: 16,
+  maxMerges: 32,
+  maxBuilds: 32,
+  fineRadius: LOD_BANDS[0].outer,
   impostorAlt: 3.5,
 };
 
-/** Space / far: may use the coarse depths the surface mode forbids. */
 export const SPACE_LOD = {
   maxDepth: 7,
   minDepth: 3,
@@ -91,26 +125,34 @@ function waveScaleForDepth(depth: number): number {
   return 1;
 }
 
-/** dist ≤ fineR → maxDepth; each ×LOD_STEP distance → −1 depth, floored at minDepth. */
+/** Hard-coded distance → target tree depth, clamped to mode min/max. */
 function targetDepthForDist(
   dist: number,
-  fineR: number,
   maxDepth: number,
   minDepth: number,
 ): number {
-  if (dist <= fineR) return maxDepth;
-  const steps = Math.ceil(Math.log(dist / fineR) / LOG_LOD_STEP);
-  return Math.max(minDepth, maxDepth - steps);
+  let depth = LOD_BANDS[LOD_BANDS.length - 1].depth;
+  for (const band of LOD_BANDS) {
+    if (dist <= band.outer) {
+      depth = band.depth;
+      break;
+    }
+  }
+  return Math.min(maxDepth, Math.max(minDepth, depth));
 }
 
-/** Quadtree depth → standard LOD (0 = finest). */
-export function treeDepthToLod(treeDepth: number, maxDepth: number): number {
-  return Math.max(0, maxDepth - treeDepth);
+/** Quadtree depth → LOD index from the hard-coded table. */
+export function treeDepthToLod(treeDepth: number, _maxDepth?: number): number {
+  for (const band of LOD_BANDS) {
+    if (treeDepth >= band.depth) return band.lod;
+  }
+  return LOD_BANDS[LOD_BANDS.length - 1].lod;
 }
 
-/** Standard LOD → quadtree depth. */
-export function lodToTreeDepth(lod: number, maxDepth: number): number {
-  return Math.max(0, maxDepth - lod);
+/** LOD index → tree depth from the hard-coded table. */
+export function lodToTreeDepth(lod: number, _maxDepth?: number): number {
+  const i = Math.max(0, Math.min(LOD_BANDS.length - 1, lod));
+  return LOD_BANDS[i].depth;
 }
 
 export function lodDebugColorHex(lod: number): string {
@@ -118,15 +160,37 @@ export function lodDebugColorHex(lod: number): string {
   return LOD_DEBUG_COLORS[i];
 }
 
-/** Outer radius of the distance band that targets this tree depth. */
-export function lodRingOuterRadius(fineR: number, maxDepth: number, treeDepth: number): number {
-  const steps = Math.max(0, maxDepth - treeDepth);
-  return fineR * (LOD_STEP ** steps);
+export function lodLevelCount(): number {
+  return LOD_BANDS.length;
 }
 
-function debugColorForTreeDepth(treeDepth: number, maxDepth: number): Color {
-  return new Color(lodDebugColorHex(treeDepthToLod(treeDepth, maxDepth)));
+/** Outer radius for a display LOD index (0 = finest). */
+export function lodIndexOuterRadius(lod: number): number {
+  const i = Math.max(0, Math.min(LOD_BANDS.length - 1, lod));
+  const outer = LOD_BANDS[i].outer;
+  return Number.isFinite(outer)
+    ? outer
+    : LOD_BANDS[Math.max(0, i - 1)].outer * 2;
 }
+
+/** Inner radius for a display LOD index. */
+export function lodIndexInnerRadius(lod: number): number {
+  if (lod <= 0) return 0;
+  return lodIndexOuterRadius(lod - 1);
+}
+
+export function lodRingOuterRadius(treeDepth: number): number {
+  return lodIndexOuterRadius(treeDepthToLod(treeDepth));
+}
+
+function debugColorForTreeDepth(treeDepth: number): Color {
+  return new Color(lodDebugColorHex(treeDepthToLod(treeDepth)));
+}
+
+/** @deprecated — use LOD_BANDS */
+export const SURFACE_BAND_DEPTHS = LOD_BANDS.map((b) => b.depth);
+/** @deprecated — use LOD_BANDS */
+export const SURFACE_RING_OUTERS = LOD_BANDS.slice(0, -1).map((b) => b.outer);
 
 export interface CubeSphereLodDebug {
   leaves: number;
@@ -212,7 +276,15 @@ function makeGeometry(
 
 function hexRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
-  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+  const n = parseInt(
+    h.length === 3
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : h,
+    16,
+  );
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
@@ -221,7 +293,11 @@ function lerp3(
   b: [number, number, number],
   t: number,
 ): [number, number, number] {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
 }
 
 export function createCubeSphereLod(
@@ -238,17 +314,24 @@ export function createCubeSphereLod(
 
   const hasLiquid = !!def.liquid;
   const seaRadius = hasLiquid
-    ? Math.max(planet.minR + 40, planet.seaLevel) + Math.max(8, planet.amplitude * 0.002)
+    ? Math.max(planet.minR + 40, planet.seaLevel) +
+      Math.max(8, planet.amplitude * 0.002)
     : planet.radius;
   const isLava = def.liquid?.kind === "lava";
   const waveAmp = hasLiquid
     ? Math.max(isLava ? 4 : 8, planet.amplitude * (isLava ? 0.0012 : 0.002))
     : 0;
-  const baseCol = hasLiquid ? hexRgb(def.liquid!.color) : [0, 0, 0] as [number, number, number];
+  const baseCol = hasLiquid
+    ? hexRgb(def.liquid!.color)
+    : ([0, 0, 0] as [number, number, number]);
   const deepCol: [number, number, number] = isLava
     ? [baseCol[0] * 0.35, baseCol[1] * 0.18, baseCol[2] * 0.08]
     : lerp3(baseCol, [0.04, 0.1, 0.16], 0.75);
-  const foamCol = lerp3(baseCol, isLava ? [1, 0.85, 0.35] : [0.78, 0.92, 1], 0.6);
+  const foamCol = lerp3(
+    baseCol,
+    isLava ? [1, 0.85, 0.35] : [0.78, 0.92, 1],
+    0.6,
+  );
 
   const waveUniforms = {
     uWaveTime: { value: 0 },
@@ -258,7 +341,10 @@ export function createCubeSphereLod(
 
   let liquidMat: MeshToonMaterial | null = null;
   if (hasLiquid) {
-    const opacity = Math.min(0.9, Math.max(0.78, (def.liquid!.opacity ?? 0.8) + 0.18));
+    const opacity = Math.min(
+      0.9,
+      Math.max(0.78, (def.liquid!.opacity ?? 0.8) + 0.18),
+    );
     liquidMat = new MeshToonMaterial({
       vertexColors: true,
       transparent: true,
@@ -307,7 +393,8 @@ export function createCubeSphereLod(
           `,
         );
     };
-    liquidMat.customProgramCacheKey = () => `liquid-chunk-wave-${isLava ? "lava" : "water"}`;
+    liquidMat.customProgramCacheKey = () =>
+      `liquid-chunk-wave-${isLava ? "lava" : "water"}`;
   }
 
   const impostorBuf = buildMeshBuffers(
@@ -321,7 +408,11 @@ export function createCubeSphereLod(
     planet.seaLevel,
   );
   const impostor = new Mesh(
-    makeGeometry(impostorBuf.positions, impostorBuf.normals, impostorBuf.colors),
+    makeGeometry(
+      impostorBuf.positions,
+      impostorBuf.normals,
+      impostorBuf.colors,
+    ),
     material,
   );
   impostor.frustumCulled = true;
@@ -336,7 +427,10 @@ export function createCubeSphereLod(
     const farLiqMat = new MeshToonMaterial({
       color: new Color(def.liquid!.color),
       transparent: true,
-      opacity: Math.min(0.88, Math.max(0.75, (def.liquid!.opacity ?? 0.8) + 0.1)),
+      opacity: Math.min(
+        0.88,
+        Math.max(0.75, (def.liquid!.opacity ?? 0.8) + 0.1),
+      ),
       depthWrite: true,
       fog: false,
       gradientMap: toonGradient(),
@@ -373,8 +467,18 @@ export function createCubeSphereLod(
     const center = new Vector3();
     const boundR = estimateNodeBounds(planet, f, -1, -1, 2, center);
     roots.push({
-      face: f, depth: 0, u0: -1, v0: -1, size: 2,
-      children: null, mesh: null, stash: null, liquidMesh: null, center, boundR, cullR: boundR,
+      face: f,
+      depth: 0,
+      u0: -1,
+      v0: -1,
+      size: 2,
+      children: null,
+      mesh: null,
+      stash: null,
+      liquidMesh: null,
+      center,
+      boundR,
+      cullR: boundR,
     });
   }
 
@@ -402,52 +506,22 @@ export function createCubeSphereLod(
   const tmpWorldCenter = new Vector3();
   const cameraPos = new Vector3();
 
-  const debugRoot = new Group();
-  debugRoot.visible = false;
-  group.add(debugRoot);
-  const debugSphereMats: MeshBasicMaterial[] = [];
-  const debugSpheres: Mesh[] = [];
   const debugMeshMats = new Map<number, MeshBasicMaterial>();
 
-  const ensureDebugSpheres = () => {
-    const levels = Math.max(1, maxDepthCap - minDepthCap + 1);
-    while (debugSpheres.length < levels) {
-      const i = debugSpheres.length;
-      const mat = new MeshBasicMaterial({
-        color: debugColorForTreeDepth(maxDepthCap - i, maxDepthCap),
-        transparent: true,
-        opacity: 0.12,
-        depthWrite: false,
-        side: BackSide,
-        fog: false,
-      });
-      debugSphereMats.push(mat);
-      const mesh = new Mesh(new SphereGeometry(1, 32, 20), mat);
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 20;
-      debugRoot.add(mesh);
-      debugSpheres.push(mesh);
-    }
-    for (let i = 0; i < debugSpheres.length; i++) {
-      debugSpheres[i].visible = i < levels;
-      if (i < levels) {
-        debugSphereMats[i].color.copy(debugColorForTreeDepth(maxDepthCap - i, maxDepthCap));
-      }
-    }
-  };
-
   const debugMatForDepth = (treeDepth: number) => {
-    const lod = treeDepthToLod(treeDepth, maxDepthCap);
+    const lod = treeDepthToLod(treeDepth);
     let m = debugMeshMats.get(lod);
     if (!m) {
       m = new MeshBasicMaterial({
-        color: debugColorForTreeDepth(treeDepth, maxDepthCap),
+        color: debugColorForTreeDepth(treeDepth),
         transparent: true,
         opacity: 0.82,
         depthWrite: true,
         fog: false,
       });
       debugMeshMats.set(lod, m);
+    } else {
+      m.color.copy(debugColorForTreeDepth(treeDepth));
     }
     return m;
   };
@@ -469,20 +543,6 @@ export function createCubeSphereLod(
       applyDebugTint(n);
     };
     for (const r of roots) walk(r);
-  };
-
-  const updateDebugSpheres = () => {
-    if (!debugVisuals) {
-      debugRoot.visible = false;
-      return;
-    }
-    ensureDebugSpheres();
-    debugRoot.visible = true;
-    debugRoot.position.copy(camLocal);
-    for (let i = 0; i < debugSpheres.length; i++) {
-      if (!debugSpheres[i].visible) continue;
-      debugSpheres[i].scale.setScalar(fineRadius * (LOD_STEP ** i));
-    }
   };
 
   const disposeMesh = (node: LodNode) => {
@@ -554,7 +614,10 @@ export function createCubeSphereLod(
       waveAmp,
     );
     if (!buf) return;
-    const mesh = new Mesh(makeGeometry(buf.positions, buf.normals, buf.colors), liquidMat);
+    const mesh = new Mesh(
+      makeGeometry(buf.positions, buf.normals, buf.colors),
+      liquidMat,
+    );
     const wScale = waveScaleForDepth(node.depth);
     const vertCount = buf.positions.length / 3;
     const waveAttr = new Float32Array(vertCount);
@@ -596,7 +659,10 @@ export function createCubeSphereLod(
       planet.seaLevel,
       node.depth >= minDepthCap + 1,
     );
-    const mesh = new Mesh(makeGeometry(buf.positions, buf.normals, buf.colors), material);
+    const mesh = new Mesh(
+      makeGeometry(buf.positions, buf.normals, buf.colors),
+      material,
+    );
     mesh.frustumCulled = true;
     mesh.receiveShadow = node.depth >= minDepthCap + 2;
     mesh.castShadow = false;
@@ -629,8 +695,16 @@ export function createCubeSphereLod(
         kids.push({
           face: node.face,
           depth: node.depth + 1,
-          u0, v0, size: h,
-          children: null, mesh: null, stash: null, liquidMesh: null, center, boundR, cullR: boundR,
+          u0,
+          v0,
+          size: h,
+          children: null,
+          mesh: null,
+          stash: null,
+          liquidMesh: null,
+          center,
+          boundR,
+          cullR: boundR,
         });
       }
     }
@@ -662,10 +736,12 @@ export function createCubeSphereLod(
   };
 
   const wantDepth = (node: LodNode) =>
-    targetDepthForDist(distToNode(node), fineRadius, maxDepthCap, minDepthCap);
+    targetDepthForDist(distToNode(node), maxDepthCap, minDepthCap);
 
   const faceOfDir = (dir: Vector3) => {
-    const ax = Math.abs(dir.x), ay = Math.abs(dir.y), az = Math.abs(dir.z);
+    const ax = Math.abs(dir.x),
+      ay = Math.abs(dir.y),
+      az = Math.abs(dir.z);
     if (ax >= ay && ax >= az) return dir.x > 0 ? 0 : 1;
     if (ay >= ax && ay >= az) return dir.y > 0 ? 2 : 3;
     return dir.z > 0 ? 4 : 5;
@@ -736,7 +812,8 @@ export function createCubeSphereLod(
       // Hysteresis above the floor only. At minDepth, must allow want==minDepth
       // or depth-(minDepth+1) leaves can never merge and the budget locks.
       const threshold = n.depth > minDepthCap ? n.depth - 1 : n.depth;
-      if (maxChildWant <= threshold) candidates.push({ node: n, dist: minChildDist });
+      if (maxChildWant <= threshold)
+        candidates.push({ node: n, dist: minChildDist });
     };
     for (const r of roots) collect(r);
     candidates.sort((a, b) => b.dist - a.dist);
@@ -777,9 +854,14 @@ export function createCubeSphereLod(
     }
   };
 
-  // Split every leaf that is coarser than its spherical target (nearest first).
+  // Fill inner rings first (LOD 0 → 1 → 2), then nearest within a ring.
   const splitPass = () => {
-    const candidates: { node: LodNode; dist: number; gap: number }[] = [];
+    const candidates: {
+      node: LodNode;
+      dist: number;
+      gap: number;
+      want: number;
+    }[] = [];
     const collect = (n: LodNode) => {
       if (n.children) {
         for (const c of n.children) collect(c);
@@ -788,11 +870,13 @@ export function createCubeSphereLod(
       const dist = distToNode(n);
       const want = wantDepth(n);
       if (n.depth < want) {
-        candidates.push({ node: n, dist, gap: want - n.depth });
+        candidates.push({ node: n, dist, gap: want - n.depth, want });
       }
     };
     for (const r of roots) collect(r);
-    candidates.sort((a, b) => a.dist - b.dist || b.gap - a.gap);
+    candidates.sort(
+      (a, b) => b.want - a.want || a.dist - b.dist || b.gap - a.gap,
+    );
     for (const { node } of candidates) {
       if (splitsThisFrame >= maxSplitsCap) break;
       if (buildsThisFrame + 4 > maxBuildsCap) break;
@@ -810,8 +894,10 @@ export function createCubeSphereLod(
       let next: LodNode | null = null;
       for (const c of node.children) {
         if (
-          u >= c.u0 - 1e-9 && u <= c.u0 + c.size + 1e-9
-          && v >= c.v0 - 1e-9 && v <= c.v0 + c.size + 1e-9
+          u >= c.u0 - 1e-9 &&
+          u <= c.u0 + c.size + 1e-9 &&
+          v >= c.v0 - 1e-9 &&
+          v <= c.v0 + c.size + 1e-9
         ) {
           next = c;
           break;
@@ -830,7 +916,7 @@ export function createCubeSphereLod(
         for (const c of n.children) visit(c);
         return;
       }
-      if (distToNode(n) > fineRadius * 16) return;
+      if (distToNode(n) > lodIndexOuterRadius(LOD_BANDS.length - 1)) return;
       const midU = n.u0 + n.size * 0.5;
       const midV = n.v0 + n.size * 0.5;
       const samples: [number, number][] = [
@@ -941,7 +1027,7 @@ export function createCubeSphereLod(
         maxDepth: maxDepthCap,
         minDepth: minDepthCap,
         depthUnderCam: depthUnder,
-        lodUnderCam: treeDepthToLod(depthUnder, maxDepthCap),
+        lodUnderCam: treeDepthToLod(depthUnder),
         camDist: lastCamDist,
         altitude: lastAlt,
         impostor: lastImpostor,
@@ -1002,14 +1088,21 @@ export function createCubeSphereLod(
       if (camLocal.lengthSq() < 1e-8) return;
       camDir.copy(camLocal).normalize();
 
-      horizonDot = lastAlt < planet.radius * 0.08
-        ? -0.28
-        : Math.max(-0.15, planet.minR / Math.max(lastCamDist, planet.minR) - 0.15);
+      horizonDot =
+        lastAlt < planet.radius * 0.08
+          ? -0.28
+          : Math.max(
+              -0.15,
+              planet.minR / Math.max(lastCamDist, planet.minR) - 0.15,
+            );
 
       camera.updateMatrixWorld(true);
       camera.getWorldDirection(viewDir);
       cameraPos.copy(camera.position);
-      projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      projScreen.multiplyMatrices(
+        camera.projectionMatrix,
+        camera.matrixWorldInverse,
+      );
       viewFrustum.setFromProjectionMatrix(projScreen);
 
       splitsThisFrame = 0;
@@ -1019,13 +1112,12 @@ export function createCubeSphereLod(
 
       mergePass();
       // Keep the bubble movable: reclaim far leaves before refining underfoot.
-      if (leafMeshes > maxLeafCap - 80) freeBudget(48);
+      if (leafMeshes > maxLeafCap - 100) freeBudget(64);
       splitPass();
-      if (frameCounter % 4 === 0) balancePass();
+      if (frameCounter % 2 === 0) balancePass();
       liquidCatchupPass();
 
       cullPass(planetRenderPos);
-      updateDebugSpheres();
       if (debugVisuals) refreshDebugTints();
     },
     updateLiquid(camPlanetLocal) {
@@ -1041,9 +1133,7 @@ export function createCubeSphereLod(
     },
     setDebugVisuals(on) {
       debugVisuals = on;
-      debugRoot.visible = on;
       refreshDebugTints();
-      if (on) updateDebugSpheres();
     },
     dispose() {
       impostor.geometry.dispose();
@@ -1053,9 +1143,7 @@ export function createCubeSphereLod(
         if (m && !Array.isArray(m)) m.dispose();
       }
       liquidMat?.dispose();
-      for (const m of debugSphereMats) m.dispose();
       for (const m of debugMeshMats.values()) m.dispose();
-      for (const s of debugSpheres) s.geometry.dispose();
       for (const r of roots) {
         mergeNode(r);
         disposeMesh(r);

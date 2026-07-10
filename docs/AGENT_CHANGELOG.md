@@ -4,6 +4,26 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-10 — Massive LOD 1/2 rings + inner-first fill
+- **Summary:** LOD 1 looked unchanged because depth-11 tiles couldn’t fill a wide ring under the leaf budget. Surface is now **3 bands**: LOD0 depth12 @160u, **LOD1 depth10 @14km**, **LOD2 depth8 @40km**. Splits fill LOD 0 → 1 → 2 in order; leaf/build caps raised.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/ui/lodDebugLegend.ts`
+- **Notes:** Tune `SURFACE_RING_OUTERS` / `SURFACE_BAND_DEPTHS`. Press **L** — orange LOD1 sphere should be huge.
+
+### 2026-07-10 — Huge LOD 1 ring + fix stalled follow
+- **Summary:** 400u LOD 0 core was filling the leaf budget so the bubble stopped following. LOD 0 back to **220u**; explicit rings with **LOD 1 → 2800u** (was ~740). Raised split/merge/build caps and leaf budget so detail keeps moving with you.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/ui/lodDebugLegend.ts`
+- **Notes:** Bands: LOD0 0–220, LOD1 220–2800, LOD2–4200, LOD3–6500, LOD4 beyond. Tune `SURFACE_RING_OUTERS`.
+
+### 2026-07-10 — Wider LOD 0 core, mid rings further out
+- **Summary:** Surface `fineRadius` 200→**400** (~2× LOD 0 band) and `LOD_STEP` 1.55→**1.85** so LOD 1–3 start further from the player. Tile depth cap unchanged (still 8..12).
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Approx bands @400u / ×1.85: LOD0 0–400, LOD1–740, LOD2–1370, LOD3–2530, LOD4 beyond.
+
+### 2026-07-10 — Drop over-detailed LOD 0–2
+- **Summary:** Surface finest was depths 15–13 (LOD 0–2) — far too dense. Cap is now **depth 12** (old LOD 3 tile size), so new LOD 0 = former LOD 3. Range **8..12** (5 steps); leaf budget cut 640→320.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Press **L** — underfoot should read LOD 0 at depth-12 density. Say “LOD 0 denser” if underfoot needs a bump back toward old LOD 2.
+
 ### 2026-07-10 — Fix LOD bubble lock after long walks
 - **Summary:** LOD stopped following after ~thousands of units because merge hysteresis required `want ≤ depth-1` while want is floored at `minDepth` (8) — so depth-9 tiles could never collapse, the leaf budget froze behind you, and underfoot couldn’t refine. Hysteresis now relaxes at the floor; `freeBudget` can merge at `minDepth`; merge/split caps raised slightly.
 - **Areas:** `src/worldgen/cubeSphereLod.ts`
@@ -186,6 +206,14 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 - **Summary:** Imported Ultimate Space Kit spaceships and astronauts (GLTF; self-contained, skinned, with Idle/Walk/Run/Jump). Classic ship scaled ~1.5× (`SHIP.length` 9→13.5, camera/landing/enter ranges adjusted). ESC menu now switches ship and astronaut with a spinning 3D preview; picks persist in localStorage. Kit clips used instead of Mixamo (already embedded in the GLTFs).
 - **Areas:** `public/models/ships/`, `public/models/characters/`, `src/content/ships.ts`, `src/content/characters.ts`, `src/config/ship.ts`, `src/config/settings.ts`, `src/visuals/shipModel.ts`, `src/ui/modelPreview.ts`, `src/ui/settingsMenu.ts`, `src/main.ts`, `docs/AGENT_CHANGELOG.md`
 - **Notes:** Prefer GLTF over OBJ/FBX for three.js. Rovers not imported (ships only). Classic astronaut kept as a selectable static fallback.
+
+### 2026-07-10 — Hard-coded LOD bands; remove debug spheres
+- **Summary:** Removed distracting LOD distance-band spheres from debug view. Replaced geometric/partial band falloff with a single hard-coded `LOD_BANDS` table (LOD 0–9 with explicit outer distances + depths). Legend always lists every band so distant chunk colors match the key. Surface minDepth lowered to 3 so far bands can actually coarsen.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/ui/lodDebugLegend.ts`, `docs/AGENT_CHANGELOG.md`
+
+### 2026-07-10 — LOD debug lists all depth stages; remove hint fluff
+- **Summary:** Legend was only showing surface *band targets* (3 rows) while the quadtree still has a leaf at every depth from max→min (visibly different densities/colors). Now lists every continuous LOD step, colors debug by `maxDepth - depth`, and removed the example “Say e.g. LOD 2 denser…” hint text.
+- **Areas:** `src/ui/lodDebugLegend.ts`, `src/worldgen/cubeSphereLod.ts`, `docs/AGENT_CHANGELOG.md`
 
 ### 2026-07-09 — Softer water tint; block browser shortcuts in-game
 - **Summary:** Reduced liquid facet color to subtle brightness variation (no hue scatter). Input now preventDefaults Ctrl/Cmd/Alt combos and common browser keys while playing so tabs/bookmarks don't steal the session.
