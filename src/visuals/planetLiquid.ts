@@ -1,6 +1,6 @@
 import {
   Mesh, BufferGeometry, BufferAttribute, MeshToonMaterial, ShaderMaterial,
-  FrontSide, BackSide, Vector3, Color,
+  FrontSide, BackSide, Vector3, Color, type Object3D,
 } from "three";
 import type { Planet } from "../worldgen/planet";
 import type { PlanetLiquid } from "../content/planets/types";
@@ -10,7 +10,7 @@ import { toonGradient } from "./toonMaterial";
 // MeshToonMaterial (not a raw ShaderMaterial) so logarithmic depth matches land.
 
 export interface PlanetLiquidMesh {
-  mesh: Mesh;
+  mesh: Object3D;
   kind: PlanetLiquid["kind"];
   level: number;
   seaRadius: number;
@@ -74,7 +74,7 @@ function buildLiquidGeometry(
   let dOff = 0;
   let maxDepth = 1;
   // Keep a land fringe so waves lifting the surface don't open a gap at shore.
-  const bury = Math.max(1.8, waveAmp * 3.5);
+  const bury = Math.max(40, waveAmp * 3.5);
   const keepMin = -bury;
 
   for (const face of FACES) {
@@ -205,7 +205,7 @@ export function createPlanetLiquid(
   if (!liq) return null;
 
   // Sit clearly above the basin floor so it wins the depth test vs terrain.
-  const seaRadius = Math.max(planet.minR + 2, planet.seaLevel) + 1.6;
+  const seaRadius = Math.max(planet.minR + 40, planet.seaLevel) + Math.max(8, planet.amplitude * 0.002);
   const isLava = liq.kind === "lava";
   const base = hexRgb(liq.color);
   const deep: [number, number, number] = isLava
@@ -213,8 +213,8 @@ export function createPlanetLiquid(
     : lerp3(base, [0.04, 0.1, 0.16], 0.75);
   const foam = lerp3(base, isLava ? [1, 0.85, 0.35] : [0.78, 0.92, 1], 0.6);
 
-  const segs = segments ?? Math.max(28, Math.round(planet.def.faceSegments / 5));
-  const waveAmp = isLava ? 0.22 : 0.38;
+  const segs = segments ?? Math.max(28, Math.min(72, Math.round(planet.def.faceSegments)));
+  const waveAmp = Math.max(isLava ? 4 : 8, planet.amplitude * (isLava ? 0.0012 : 0.002));
   const geometry = buildLiquidGeometry(
     planet, seaRadius, segs, base, deep, foam, isLava, waveAmp,
   );
@@ -267,7 +267,7 @@ export function createPlanetLiquid(
         {
           float r0 = length(transformed);
           vec3 n0 = r0 > 1e-5 ? transformed / r0 : vec3(0.0, 1.0, 0.0);
-          float open = smoothstep(uSeaR - 1.2, uSeaR + 0.4, r0);
+          float open = smoothstep(uSeaR - max(8.0, uWaveAmp * 2.5), uSeaR + max(2.0, uWaveAmp * 0.8), r0);
           float w = sin(n0.x * 18.0 + n0.z * 14.0 + uWaveTime * 1.35)
                   + sin(n0.y * 16.0 + n0.x * 11.0 - uWaveTime * 0.95) * 0.55;
           transformed += n0 * (w * uWaveAmp * open);
@@ -295,12 +295,14 @@ export function createPlanetLiquid(
       uSeaR: { value: seaRadius },
     },
     vertexShader: /* glsl */ `
-      attribute vec3 color;
-      varying vec3 vColor;
       #include <common>
+      #include <color_pars_vertex>
       #include <logdepthbuf_pars_vertex>
       void main() {
-        vColor = color * 0.5;
+        #include <color_vertex>
+        #ifdef USE_COLOR
+          vColor *= 0.5;
+        #endif
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         #include <logdepthbuf_vertex>
       }
@@ -313,7 +315,7 @@ export function createPlanetLiquid(
       void main() {
         #include <logdepthbuf_fragment>
         float camR = length(uCamLocal);
-        float under = mix(0.4, 1.1, clamp((uSeaR - camR) / 30.0, 0.0, 1.0));
+        float under = mix(0.4, 1.1, clamp((uSeaR - camR) / max(80.0, uSeaR * 0.002), 0.0, 1.0));
         float a = uOpacity * under * mix(0.3, 1.0, uUnder);
         if (a < 0.02) discard;
         gl_FragColor = vec4(vColor, a);

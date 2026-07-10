@@ -30,8 +30,8 @@ export async function loadShipModel(shipIdOrDef?: string | ShipDef): Promise<Shi
   model.traverse((o: Object3D) => {
     const m = o as Mesh;
     if (m.isMesh) {
-      m.castShadow = false;
-      m.receiveShadow = false;
+      m.castShadow = true;
+      m.receiveShadow = true;
       m.renderOrder = 10;
       if (Array.isArray(m.material)) {
         m.material = m.material.map((x) => makeReadableToon(x));
@@ -56,6 +56,10 @@ export async function loadShipModel(shipIdOrDef?: string | ShipDef): Promise<Shi
 
   const group = new Group();
   group.add(hull);
+  hull.castShadow = true;
+  hull.receiveShadow = true;
+  group.castShadow = true;
+  group.receiveShadow = true;
 
   const glowMat = new MeshBasicMaterial({
     color: new Color("#7fd6ff"), transparent: true, blending: AdditiveBlending, depthWrite: false,

@@ -4,6 +4,7 @@ import {
   STAR_TYPE_PRESETS, type StarDef, type StarType,
 } from "../config/star";
 import { DEFAULT_NOISE } from "../content/planets/base";
+import { AU_REF } from "../config/scale";
 import type {
   PlanetDef, PlanetLiquid, PlanetNoise, PlanetPalette, PlanetRingBand,
   OrbitElements,
@@ -23,15 +24,15 @@ export interface StarSystemDef {
 }
 
 const ORBIT = {
-  smaMin: 18000,
-  smaMax: 220000,
+  smaMin: 900000,
+  smaMax: 12000000,
   eccMin: 0.01,
   eccMax: 0.14,
   incMax: 12,
   // Minimum gap between successive orbit envelopes (outer of inner + pad).
-  padMin: 7000,
-  padMax: 18000,
-  periodScale: 0.00055, // period ≈ scale * sma^1.5
+  padMin: 350000,
+  padMax: 900000,
+  periodScale: 0.0000022, // period ≈ scale * sma^1.5 (tuned for mega-SMA)
 };
 
 const NAME_A = [
@@ -173,28 +174,28 @@ function noiseFor(climate: ClimateKind, rng: RngStream): PlanetNoise {
 function liquidFor(climate: ClimateKind, rng: RngStream): PlanetLiquid | undefined {
   if (climate === "scorched") {
     return rng() < 0.7
-      ? { kind: "lava", level: rngRange(rng, -14, -4), color: "#ff6a1a", opacity: 0.9 }
+      ? { kind: "lava", level: rngRange(rng, -700, -200), color: "#ff6a1a", opacity: 0.9 }
       : undefined;
   }
   if (climate === "arid") {
     return rng() < 0.25
-      ? { kind: "water", level: rngRange(rng, -20, -10), color: "#2a6a7a", opacity: 0.7 }
+      ? { kind: "water", level: rngRange(rng, -1000, -500), color: "#2a6a7a", opacity: 0.7 }
       : undefined;
   }
   if (climate === "gas_giant") return undefined;
   if (climate === "ice") {
     return {
-      kind: "water", level: rngRange(rng, -12, -4), color: "#5aa0c4", opacity: 0.78,
+      kind: "water", level: rngRange(rng, -600, -200), color: "#5aa0c4", opacity: 0.78,
     };
   }
   if (climate === "oceanic") {
     return {
-      kind: "water", level: rngRange(rng, -4, 4), color: "#146878", opacity: 0.86,
+      kind: "water", level: rngRange(rng, -200, 200), color: "#146878", opacity: 0.86,
     };
   }
   return {
     kind: "water",
-    level: rngRange(rng, -12, -4),
+    level: rngRange(rng, -600, -200),
     color: climate === "oasis" ? "#146878" : "#1e6f92",
     opacity: 0.82,
   };
@@ -212,9 +213,9 @@ function ringsFor(climate: ClimateKind, rng: RngStream): readonly PlanetRingBand
 }
 
 function radiusFor(climate: ClimateKind, rng: RngStream): number {
-  if (climate === "gas_giant") return rngRange(rng, 1100, 1900);
-  if (climate === "ice" || climate === "oceanic") return rngRange(rng, 420, 1100);
-  return rngRange(rng, 220, 900);
+  if (climate === "gas_giant") return rngRange(rng, 55000, 95000);
+  if (climate === "ice" || climate === "oceanic") return rngRange(rng, 21000, 55000);
+  return rngRange(rng, 11000, 45000);
 }
 
 function generateStar(rng: RngStream): StarDef {
@@ -249,7 +250,7 @@ function buildPlanet(
 ): PlanetDef {
   const ecc = rngRange(rng, ORBIT.eccMin, ORBIT.eccMax);
   // Equilibrium temp ~ L^0.25 / sqrt(a). Tuned so home-ish SMA @ L=1 ≈ 290K.
-  const au = sma / 48000;
+  const au = sma / AU_REF;
   const tempK = 290 * Math.pow(star.luminosity, 0.25) / Math.sqrt(Math.max(0.15, au));
 
   let climate = forcedClimate ?? climateFromTemp(tempK, star.type, rng);
@@ -264,13 +265,13 @@ function buildPlanet(
 
   const radius = radiusFor(climate, rng);
   const amplitude = climate === "gas_giant"
-    ? rngRange(rng, 40, 80)
-    : rngRange(rng, 70, 140);
+    ? rngRange(rng, 2000, 4000)
+    : rngRange(rng, 3500, 7000);
   const density = climate === "gas_giant"
     ? rngRange(rng, 0.15, 0.45)
     : rngRange(rng, 0.7, 1.4);
-  const massEarth = density * Math.pow(radius / 560, 3);
-  const gravityG = Math.max(0.15, Math.min(2.8, massEarth / Math.pow(radius / 560, 2)));
+  const massEarth = density * Math.pow(radius / 28000, 3);
+  const gravityG = Math.max(0.15, Math.min(2.8, massEarth / Math.pow(radius / 28000, 2)));
   const hasAtmo = climate !== "scorched" || rng() < 0.4;
   const habitability = (() => {
     if (climate === "temperate" || climate === "oasis") return rngRange(rng, 0.55, 0.95);
@@ -300,15 +301,15 @@ function buildPlanet(
   };
 
   const atmoThick = hasAtmo
-    ? (climate === "gas_giant" ? rngRange(rng, 120, 200) : rngRange(rng, 45, 110))
-    : rngRange(rng, 15, 40);
+    ? (climate === "gas_giant" ? rngRange(rng, 6000, 10000) : rngRange(rng, 2200, 5500))
+    : rngRange(rng, 700, 2000);
 
   return {
     id: `${seed}-p${index}`,
     name: planetName(rng, index),
     seed: `${seed}-planet-${index}`,
     radius,
-    faceSegments: climate === "gas_giant" ? 400 : rngInt(rng, 340, 400),
+    faceSegments: 64,
     amplitude,
     noise: noiseFor(climate, rng),
     palette: paletteFor(climate, rng),
@@ -354,7 +355,7 @@ export function generateStarSystem(seed: string): StarSystemDef {
       sma = prevOuter + pad + maxR;
       def.orbit.semiMajorAxis = sma;
       def.orbit.periodSeconds = keplerPeriod(sma);
-      if (def.meta) def.meta.orbitalAu = sma / 48000;
+      if (def.meta) def.meta.orbitalAu = sma / AU_REF;
     }
     prevOuter = def.orbit.semiMajorAxis * (1 + def.orbit.eccentricity) + maxR;
     planets.push(def);

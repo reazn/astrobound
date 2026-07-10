@@ -8,18 +8,14 @@ import { DEFAULT_CHARACTER_ID } from "../content/characters";
 export interface Settings {
   mouseSensitivity: number;
   invertY: boolean;
-  cursorLocked: boolean; // false => "normal mouse", pointer lock disabled
+  cursorLocked: boolean;
 
-  // Camera zoom (scroll wheel), clamped to [minZoom, maxZoom].
   cameraDistance: number;
   minZoom: number;
   maxZoom: number;
 
   fov: number;
 
-  // When false (default), releasing thrust brakes you toward the local orbital
-  // rest frame so you can match stations/asteroids easily. When true, vacuum
-  // coasting keeps your relative velocity (NMS-style momentum).
   maintainMomentum: boolean;
 
   selectedShipId: string;

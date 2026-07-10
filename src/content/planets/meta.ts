@@ -16,7 +16,7 @@ export interface PlanetMeta {
   massEarth: number;
   // Surface gravity relative to 1g.
   gravityG: number;
-  // AU-ish: semiMajorAxis / 48000 (home Cragfall ≈ 1).
+  // AU-ish: semiMajorAxis / AU_REF (home Cragfall ≈ 1; see config/scale.ts).
   orbitalAu: number;
   density: number;
   hasAtmosphere: boolean;

@@ -5,7 +5,7 @@ export const STATION_RADIUS = 60;
 export const DOCK_BAY_COUNT = 4;
 
 export const STATION_ORBIT: OrbitElements = {
-  semiMajorAxis: 52000,
+  semiMajorAxis: 2600000,
   eccentricity: 0.03,
   periodSeconds: 7400,
   inclinationDeg: 2,

@@ -2,8 +2,8 @@ import { createNoise3D, type NoiseFunction3D } from "simplex-noise";
 import type { RngStream } from "../engine/rng";
 import type { PlanetDef } from "../content/planets/types";
 
-// Spherical heightfield via 3D simplex FBM. Stronger continental relief,
-// ridged mountain belts, and deep basins (for water/lava).
+// Spherical heightfield via 3D simplex FBM. Continental shelves, ridged
+// mountain belts, micro-detail for near-surface chunk LOD, deep basins.
 
 export interface Planet {
   def: PlanetDef;
@@ -11,7 +11,7 @@ export interface Planet {
   amplitude: number;
   minR: number;
   maxR: number;
-  seaLevel: number; // absolute radius of liquid surface (or radius if none)
+  seaLevel: number;
   heightAt(nx: number, ny: number, nz: number): number;
   surfaceRadius(nx: number, ny: number, nz: number): number;
 }
@@ -56,9 +56,11 @@ export function createPlanet(def: PlanetDef, rngWorld: RngStream): Planet {
   const mount = createNoise3D(rngWorld);
   const mountMask = createNoise3D(rngWorld);
   const detail = createNoise3D(rngWorld);
+  const micro = createNoise3D(rngWorld);
   const ravine = createNoise3D(rngWorld);
   const ravineMask = createNoise3D(rngWorld);
   const basin = createNoise3D(rngWorld);
+  const dune = createNoise3D(rngWorld);
   const n = def.noise;
 
   const heightAt = (nx: number, ny: number, nz: number): number => {
@@ -67,35 +69,46 @@ export function createPlanet(def: PlanetDef, rngWorld: RngStream): Planet {
     const wy = ny + wa * warp(ny * wf, nz * wf, nx * wf);
     const wz = nz + wa * warp(nz * wf, nx * wf, ny * wf);
 
-    // Broad continents — keep lows deep so basins can flood.
     let land = fbm(continental, wx, wy, wz, n.baseFreq, n.baseOctaves, n.baseGain, n.baseLacunarity);
     const land01 = clamp01(land * 0.5 + 0.5);
-    // Mild peak sharpening; don't crush valleys.
-    land = Math.pow(land01, 1.15) * 2 - 1;
+    land = Math.pow(land01, 1.12) * 2 - 1;
 
-    // Low-frequency basins carve deep lows for lakes / seas.
-    const basinN = basin(nx * n.baseFreq * 0.45, ny * n.baseFreq * 0.45, nz * n.baseFreq * 0.45);
-    const basinCarve = Math.pow(clamp01(-basinN * 0.5 + 0.35), 1.6) * 0.55;
+    const basinN = basin(nx * n.baseFreq * 0.42, ny * n.baseFreq * 0.42, nz * n.baseFreq * 0.42);
+    const basinCarve = Math.pow(clamp01(-basinN * 0.5 + 0.38), 1.55) * 0.58;
 
     const mMask = clamp01(
-      (mountMask(nx * n.maskFreq, ny * n.maskFreq, nz * n.maskFreq) * 0.5 + 0.5 - 0.22) / 0.5,
+      (mountMask(nx * n.maskFreq, ny * n.maskFreq, nz * n.maskFreq) * 0.5 + 0.5 - 0.2) / 0.52,
     );
-    const shelf = clamp01((land + 0.05) / 0.75);
+    const shelf = clamp01((land + 0.08) / 0.78);
     const mountains = ridged(mount, wx, wy, wz, n.mountainFreq, n.mountainOctaves)
       * mMask * shelf;
 
-    const hills = fbm(detail, wx, wy, wz, n.baseFreq * 2.2, 4, 0.48, 2.1) * 0.4;
+    const hills = fbm(detail, wx, wy, wz, n.baseFreq * 2.4, 5, 0.48, 2.12) * 0.38;
+
+    // Fine relief for chunk LOD near the surface (angular high-freq).
+    const microN = fbm(micro, wx, wy, wz, n.baseFreq * 6.5, 4, 0.45, 2.2) * 0.12;
+    const dunes = ridged(dune, wx, wy, wz, n.baseFreq * 3.8, 3) * 0.1
+      * clamp01(0.55 - Math.abs(land));
 
     const rMask = clamp01(
       (ravineMask(nx * n.ravineMaskFreq, ny * n.ravineMaskFreq, nz * n.ravineMaskFreq)
         * 0.5 + 0.5 - 0.48) / 0.45,
     );
-    const rav = ridged(ravine, wx, wy, wz, n.ravineFreq, 3);
+    const rav = ridged(ravine, wx, wy, wz, n.ravineFreq, 4);
     const ravines = rav * rav * rMask * clamp01(land + 0.35);
 
-    let v = land * 0.5 + mountains * 0.72 + hills * 0.32 - ravines * 0.28 - basinCarve;
-    v = Math.max(-1.15, Math.min(1.15, v));
-    v = Math.tanh(v * 0.95);
+    // Soft terracing on highlands.
+    let v = land * 0.48 + mountains * 0.74 + hills * 0.34 + microN + dunes
+      - ravines * 0.3 - basinCarve;
+    if (n.terraceSteps > 1 && v > 0.15) {
+      const t = (v - 0.15) / 0.85;
+      const steps = n.terraceSteps;
+      const stepped = Math.floor(t * steps) / steps;
+      const blend = n.terraceBlend;
+      v = 0.15 + (t * (1 - blend) + stepped * blend) * 0.85;
+    }
+    v = Math.max(-1.2, Math.min(1.2, v));
+    v = Math.tanh(v * 0.92);
     return v * def.amplitude;
   };
 

@@ -15,6 +15,7 @@ import {
 // in shade (ship / player / asteroids) without full PBR darkness.
 
 let cachedGradient: DataTexture | null = null;
+let cachedTerrainGradient: DataTexture | null = null;
 let cachedReadableGradient: DataTexture | null = null;
 
 export function toonGradient(): DataTexture {
@@ -25,6 +26,18 @@ export function toonGradient(): DataTexture {
   tex.magFilter = NearestFilter;
   tex.needsUpdate = true;
   cachedGradient = tex;
+  return tex;
+}
+
+/** Softer terrain ramp — more bands so lighting reads natural, not faceted. */
+export function terrainToonGradient(): DataTexture {
+  if (cachedTerrainGradient) return cachedTerrainGradient;
+  const steps = new Uint8Array([95, 125, 155, 185, 215, 240, 255]);
+  const tex = new DataTexture(steps, steps.length, 1, RedFormat);
+  tex.minFilter = NearestFilter;
+  tex.magFilter = NearestFilter;
+  tex.needsUpdate = true;
+  cachedTerrainGradient = tex;
   return tex;
 }
 
@@ -43,7 +56,10 @@ export function readableToonGradient(): DataTexture {
 export function createTerrainMaterial(): MeshToonMaterial {
   return new MeshToonMaterial({
     vertexColors: true,
-    gradientMap: toonGradient(),
+    gradientMap: terrainToonGradient(),
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   });
 }
 
@@ -75,7 +91,8 @@ export function makeReadableToon(src: Material): MeshToonMaterial {
     out.emissive.copy(s.emissive);
     out.emissiveIntensity = Math.min(0.25, s.emissiveIntensity);
   }
-  out.opacity = s.opacity ?? 1;
-  out.transparent = !!s.transparent;
+  out.opacity = 1;
+  out.transparent = false;
+  out.depthWrite = true;
   return out;
 }

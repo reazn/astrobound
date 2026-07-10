@@ -16,14 +16,11 @@ import { settings } from "../config/settings";
 // one warm directional "sun" (repositioned toward the star every frame, see
 // main.ts) and a cool hemisphere fill whose tint is updated per-planet.
 //
-// The camera far plane and depth buffer are sized for the solar system's vast
-// scale (tens of thousands of units): a logarithmic depth buffer avoids
-// z-fighting across that huge near/far ratio. Actual object positions stay
-// small thanks to floating-origin rendering (see engine/floatingOrigin.ts) —
-// this far plane only needs to cover what's visible AFTER that transform.
+// Far plane must cover interplanetary deltas after floating-origin (home
+// system SMAs are millions of units). Logarithmic depth keeps z usable.
 
 const SPACE_BG = "#05060b";
-const FAR_PLANE = 150000;
+const FAR_PLANE = 25_000_000;
 
 export interface RenderContext {
   scene: Scene;
@@ -59,17 +56,28 @@ export function createRenderer(container: HTMLElement): RenderContext {
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = false;
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFSoftShadowMap;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   container.appendChild(renderer.domElement);
 
-  // Sun: the star, as a directional key light (repositioned toward the real
-  // star direction every frame). Shadows stay off — a directional shadow map
-  // paints a hard orthographic square on planet-scale terrain.
+  // Sun: directional key light. Shadow map is a small ortho volume around the
+  // player (updated in main) — full-planet shadows are not viable at this scale.
   const sun = new DirectionalLight(new Color(STAR.color), STAR.lightIntensity * 0.7);
   sun.castShadow = false;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.00015;
+  sun.shadow.normalBias = 0.02;
+  sun.shadow.radius = 2;
+  const sc = sun.shadow.camera;
+  sc.near = 0.5;
+  sc.far = 360;
+  sc.left = -140;
+  sc.right = 140;
+  sc.top = 140;
+  sc.bottom = -140;
+  sc.updateProjectionMatrix();
   scene.add(sun);
   scene.add(sun.target);
 

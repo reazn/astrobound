@@ -19,9 +19,9 @@ const ROCK_URLS = [
   "/models/rocks/rock_d.glb",
 ];
 
-const COUNT_PER_PLANET = 720;
-const SCALE_MIN = 0.55;
-const SCALE_MAX = 6.5;
+const COUNT_PER_PLANET = 900;
+const SCALE_MIN = 1.2;
+const SCALE_MAX = 28;
 
 export interface PlanetRocks {
   group: Group;
@@ -132,8 +132,8 @@ export async function createPlanetRocks(
 
     const mesh = new InstancedMesh(pool[pi].geo, material, count);
     mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.frustumCulled = false;
 
     let placed = 0;

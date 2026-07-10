@@ -26,6 +26,7 @@ export function createStar(def?: StarDef): StarVisual {
   const coreMat = new MeshBasicMaterial({ color: new Color(d.color), fog: false });
   const core = new Mesh(new SphereGeometry(1, 32, 24), coreMat);
   core.scale.setScalar(d.radius);
+  core.frustumCulled = false;
   group.add(core);
 
   const coronaMat = new MeshBasicMaterial({
@@ -34,6 +35,7 @@ export function createStar(def?: StarDef): StarVisual {
   });
   const corona = new Mesh(new SphereGeometry(1, 32, 24), coronaMat);
   corona.scale.setScalar(d.radius * 1.35);
+  corona.frustumCulled = false;
   group.add(corona);
 
   const light = new PointLight(new Color(d.color), d.lightIntensity, 0, 0.15);

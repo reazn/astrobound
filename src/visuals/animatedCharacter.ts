@@ -88,8 +88,8 @@ export function createAnimatedCharacter(
   root.traverse((o: Object3D) => {
     const m = o as Mesh;
     if (m.isMesh) {
-      m.castShadow = false;
-      m.receiveShadow = false;
+      m.castShadow = true;
+      m.receiveShadow = true;
       m.frustumCulled = false;
       if (Array.isArray(m.material)) {
         m.material = m.material.map((x) => makeReadableToon(x));
@@ -100,6 +100,8 @@ export function createAnimatedCharacter(
       for (const mat of mats) materials.push(mat);
     }
   });
+  root.castShadow = true;
+  root.receiveShadow = true;
   const height = size.y || 1.8;
 
   // Bind mixer to root so clip tracks resolve through the full hierarchy.

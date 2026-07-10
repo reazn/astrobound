@@ -13,3 +13,7 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+tmp-shots/
+scripts/shot.mjs
+scripts/probe*.mjs

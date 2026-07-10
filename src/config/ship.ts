@@ -4,11 +4,11 @@ export const SHIP = {
   // Visual / collision length of the player hull (longest axis after normalize).
   length: 13.5,
 
-  thrustAccel: 55,
-  reverseAccel: 30,
-  maxSpeed: 550,
+  thrustAccel: 140,
+  reverseAccel: 70,
+  maxSpeed: 14000,
   boostMultiplier: 2.6,
-  boostAloneAccel: 70, // Shift with no W/S still pushes forward
+  boostAloneAccel: 200, // Shift with no W/S still pushes forward
   // Vacuum drag when maintainMomentum is ON (coasting). Brake mode uses
   // brakeDamping instead so releasing input settles to a relative stop.
   linearDamping: 0.008,
@@ -37,10 +37,10 @@ export const SHIP = {
   launchSeconds: 1.6,
   landSeconds: 1.6,
   launchLiftAccel: 6, // gentle upward velocity handed to free-flight at take-off
-  launchClearance: 28, // hover height reached at end of take-off
+  launchClearance: 120, // hover height reached at end of take-off
 
-  manualLandAltitude: 900,
-  manualLandMaxSpeed: 120,
+  manualLandAltitude: 45000,
+  manualLandMaxSpeed: 800,
 
   atmoDragStrength: 0.12,
 
@@ -50,27 +50,27 @@ export const SHIP = {
 
   // Collision: kill inward velocity fully and just resolve penetration — no
   // springy repulse (which made the ship bounce off the surface).
-  collisionBuffer: 30,
+  collisionBuffer: 80,
   collisionDamp: 1.0,
   groundFriction: 3.0, // tangential drag while touching the surface
 
   // Hyperdrive: charge, then cruise. With a lock-on target the ship auto-aims
   // and freezes pilot input; exit velocity matches the target body's orbit.
   warpChargeSeconds: 2.2,
-  warpCruiseSpeed: 9000,
+  warpCruiseSpeed: 320000,
   warpExitPlanetRadii: 6, // drop out within this × a planet's max radius
   warpExitStarRadii: 3,
-  warpExitStationDist: 900,
-  warpExitSpeed: 120, // approach speed added on top of matched body velocity
+  warpExitStationDist: 45000,
+  warpExitSpeed: 600, // approach speed added on top of matched body velocity
   warpTurnRate: 2.4, // how fast orientation slews toward a lock-on target
   warpLockFovDeg: 11, // reticle cone used to pick a lock-on body (matches HUD ring)
   // Refuse to charge hyperdrive inside this × body radius (planets) / station dist.
   warpMinPlanetRadii: 3.2,
-  warpMinStationDist: 1400,
+  warpMinStationDist: 70000,
 
   enterRange: 10,
-  dockRange: 110,
-  dockMaxSpeed: 90,
+  dockRange: 200,
+  dockMaxSpeed: 200,
   undockImpulse: 35,
 
   cameraDistance: 36,

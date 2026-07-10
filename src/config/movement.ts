@@ -41,7 +41,7 @@ export const MOVEMENT = {
   maxStepHeight: 0.55,
 
   // Debug / explore fly mode (toggle with V on foot).
-  flySpeedMult: 5,
+  // Horizontal and vertical use the same flySpeed so axes feel equal.
+  flySpeedMult: 12,
   flyBoostMult: 2, // Shift while flying
-  flyVerticalSpeed: 18,
 } as const;

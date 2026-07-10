@@ -18,7 +18,7 @@ function slopeAt(planet: PlanetInstance, n: Vector3): number {
   if (right.lengthSq() < 1e-6) right.set(0, 0, 1).addScaledVector(n, -n.z);
   right.normalize();
   forward.crossVectors(n, right).normalize();
-  const eps = 2.5;
+  const eps = Math.max(2.5, planet.planet.radius * 0.00012);
   const r0 = planet.planet.surfaceRadius(n.x, n.y, n.z);
   tmp.copy(n).addScaledVector(right, eps / planet.planet.radius).normalize();
   const r1 = planet.planet.surfaceRadius(tmp.x, tmp.y, tmp.z);

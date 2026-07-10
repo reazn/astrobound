@@ -10,7 +10,6 @@ export interface StarDef {
   color: string;
   coronaColor: string;
   lightIntensity: number;
-  // Relative luminosity used for planet equilibrium temperature.
   luminosity: number;
 }
 
@@ -26,8 +25,8 @@ export const STAR_TYPE_PRESETS: Record<StarType, Omit<StarDef, "name" | "radius"
     type: "red",
     color: "#ff6b4a",
     coronaColor: "#ff3a1a",
-    radiusMin: 2200,
-    radiusMax: 5200,
+    radiusMin: 110000,
+    radiusMax: 260000,
     intensityMin: 1.6,
     intensityMax: 2.6,
     luminosityMin: 0.25,
@@ -37,8 +36,8 @@ export const STAR_TYPE_PRESETS: Record<StarType, Omit<StarDef, "name" | "radius"
     type: "yellow",
     color: "#fff2c0",
     coronaColor: "#ffb85a",
-    radiusMin: 3200,
-    radiusMax: 4800,
+    radiusMin: 160000,
+    radiusMax: 240000,
     intensityMin: 2.8,
     intensityMax: 3.8,
     luminosityMin: 0.85,
@@ -48,8 +47,8 @@ export const STAR_TYPE_PRESETS: Record<StarType, Omit<StarDef, "name" | "radius"
     type: "green",
     color: "#a8f0c0",
     coronaColor: "#4adf8a",
-    radiusMin: 2800,
-    radiusMax: 4500,
+    radiusMin: 140000,
+    radiusMax: 225000,
     intensityMin: 2.4,
     intensityMax: 3.4,
     luminosityMin: 0.7,
@@ -59,8 +58,8 @@ export const STAR_TYPE_PRESETS: Record<StarType, Omit<StarDef, "name" | "radius"
     type: "blue",
     color: "#a8c8ff",
     coronaColor: "#5a8fff",
-    radiusMin: 4500,
-    radiusMax: 9000,
+    radiusMin: 225000,
+    radiusMax: 450000,
     intensityMin: 4.0,
     intensityMax: 6.5,
     luminosityMin: 2.2,
@@ -68,9 +67,8 @@ export const STAR_TYPE_PRESETS: Record<StarType, Omit<StarDef, "name" | "radius"
   },
 };
 
-// Home-system defaults (Sol-analogue yellow).
 export const STAR = {
-  radius: 4000,
+  radius: 200000,
   color: "#fff2c0",
   lightIntensity: 3.4,
   coronaColor: "#ffb85a",

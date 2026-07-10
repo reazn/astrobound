@@ -1,23 +1,23 @@
 import type { PlanetNoise } from "./types";
 
-// Tuned for spherical 3D FBM: continents, distinct mountain belts, deep basins
-// for liquids, walkable hills. faceSegments drives near-surface LOD density.
+// Tuned for spherical 3D FBM on large worlds. Frequencies are angular (unit
+// sphere); amplitude on PlanetDef sets relief in world units.
 export const DEFAULT_NOISE: PlanetNoise = {
-  baseFreq: 0.72,
-  baseOctaves: 5,
+  baseFreq: 0.68,
+  baseOctaves: 6,
   baseGain: 0.52,
-  baseLacunarity: 2.05,
-  warpFreq: 0.85,
-  warpAmount: 0.24,
+  baseLacunarity: 2.08,
+  warpFreq: 0.9,
+  warpAmount: 0.28,
 
-  mountainFreq: 1.35,
-  mountainOctaves: 5,
-  maskFreq: 0.5,
+  mountainFreq: 1.4,
+  mountainOctaves: 6,
+  maskFreq: 0.48,
 
-  ravineFreq: 1.15,
-  ravineMaskFreq: 0.5,
+  ravineFreq: 1.25,
+  ravineMaskFreq: 0.52,
 
-  terraceSteps: 3,
-  terraceBlend: 0.8,
-  mottleFreq: 8.0,
+  terraceSteps: 4,
+  terraceBlend: 0.75,
+  mottleFreq: 10.0,
 };

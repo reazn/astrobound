@@ -4,6 +4,124 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-10 — Fix LOD bubble lock after long walks
+- **Summary:** LOD stopped following after ~thousands of units because merge hysteresis required `want ≤ depth-1` while want is floored at `minDepth` (8) — so depth-9 tiles could never collapse, the leaf budget froze behind you, and underfoot couldn’t refine. Hysteresis now relaxes at the floor; `freeBudget` can merge at `minDepth`; merge/split caps raised slightly.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Not caused by the LOD-0 numbering change (display-only).
+
+### 2026-07-10 — LOD debug uses standard numbering (0 = finest)
+- **Summary:** Debug key now labels **LOD 0 = finest** (standard), counting up as detail drops. Chunk tint colors follow that index. Internal quadtree depth is unchanged; `treeDepthToLod` / `lodUnderCam` bridge the two.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/ui/lodDebugLegend.ts`, `src/main.ts`
+- **Notes:** Say “LOD 0/1/2…” when tuning — not the old depth-15 style numbers.
+
+### 2026-07-10 — LOD debug depth key chart
+- **Summary:** Press **L** now shows an on-screen **LOD DEPTH KEY**: numbered rows (`LOD 15`…`LOD 8`) with matching chunk colors, distance bands, and a live underfoot highlight. Exports `SURFACE_LOD` / `lodDebugColorHex` / `lodRingOuterRadius` for the legend.
+- **Areas:** `src/ui/lodDebugLegend.ts`, `src/ui/hud.css`, `src/main.ts`, `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Refer to depths by number when tuning (“LOD 12 denser”, “step between 10–11”).
+
+### 2026-07-10 — Revert broken LOD fade / depth-11 clamp
+- **Summary:** Fully reverted the crossfade + maxDepth-11 + widened-ring change that left the tree stuck on huge coarse tiles (busy flags blocked further splits). Restored working surface LOD: depths **8..15**, `fineRadius` 200, immediate split/merge with stash, no fade jobs.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Do not reintroduce per-split busy/fade without allowing nested refine during the fade.
+
+### 2026-07-10 — Restore depth-11 underfoot, wider near rings, LOD crossfade
+- **Summary:** *(REVERTED)* Pulled max underfoot detail back to **depth 11**… — this broke refinement; see revert entry above.
+
+### 2026-07-10 — More mid/far LOD rings + smooth lighting + local shadows
+- **Summary:** Surface LOD is now depths **8..15** (8 steps) with ×1.55 distance falloff so close-up tile sizes stay closer and mid/far get more variety; floor raised again so distant mountains stay denser. Terrain uses **smooth vertex normals** + a softer 7-band toon ramp (less faceted). Enabled a **player-local** directional shadow map (~180u ortho) — character/ship/rocks cast, near terrain receives; off in space to stay cheap.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`, `src/visuals/toonMaterial.ts`, `src/engine/renderer.ts`, `src/main.ts`, `src/visuals/animatedCharacter.ts`, `src/visuals/shipModel.ts`, `src/visuals/planetRocks.ts`
+- **Notes:** Depths ≤7 remain space-only. Shadow map is 2048² around the floating-origin focus.
+
+### 2026-07-10 — More on-planet LOD steps; coarse depths space-only
+- **Summary:** Surface LOD now uses depths **7..13** (seven steps) with a tighter ×2.1 distance falloff for more intermediate rings. The previous two coarsest on-planet levels (5–6) are reserved for space/far only (`SPACE` minDepth 3, maxDepth 6) — too faceted for ground silhouettes.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Per-mode `minDepth`/`maxDepth`. Debug **L** spheres follow the active mode’s range.
+
+### 2026-07-10 — Gentler LOD falloff + build-budget hitching fix
+- **Summary:** Distant mountains were collapsing too fast under ×2 distance falloff. Falloff is now ×2.65 per depth (quality holds farther), with a depth floor of 5. Movement hitching was from sync mesh rebuilds (each split = 4 builds); capped to ~12 builds/frame, stash near-surface parents for free merge, skip skirts on coarse tiles, defer liquid builds, and run seam balance every 4th frame.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`
+- **Notes:** Debug **L** spheres use `fineR × 2.65ⁿ`. Tune `LOD_STEP` / `SURFACE.maxBuilds` if needed.
+
+### 2026-07-10 — Spherical LOD bubble actually follows the player
+- **Summary:** Root cause: `fineRadius` was ~1680u so almost everything wanted max depth, the leaf budget filled with a thin underfoot *spike*, and nothing could merge/refine around you. Now fine core is 220u with `/2` distance falloff; every frame merges far detail then splits *all* nearby leaves (nearest first). Playwright: after walking 1.2km underfoot stays depth 11 while spawn collapses to 4; ~70 depth-11 tiles form a real disc (not 4 spike leaves).
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Press **L** for debug spheres + depth colors. Tune `SURFACE.fineRadius` if the core should be wider.
+
+### 2026-07-10 — Fix broken distance LOD + L debug viz
+- **Summary:** Distant HQ patches were caused by `distToNode` subtracting inflated `cullR` (coarse tiles looked near). Now uses size-based half-extent so detail follows the player again. **L** toggles LOD debug: translucent distance spheres around the player + per-depth chunk colors.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/planetInstance.ts`, `src/main.ts`
+- **Notes:** Red/warm = fine, blue/purple = coarse; sphere radii = fineR × 2ⁿ.
+
+### 2026-07-10 — Spherical LOD bubble + geometric falloff
+- **Summary:** LOD is now a 3D sphere around the player/ship (not surface-only angles). Finest ring is ~5× wider (`fineRadiusFrac` 0.06). Each doubling of distance drops one depth level. Flying above no longer switches to cheap space mode — deep LOD stays while near the planet.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/main.ts`
+- **Notes:** Impostor only beyond ~3.5 planet-radii altitude.
+
+### 2026-07-10 — Surface/space LOD modes + finer underfoot
+- **Summary:** Removed impostor underlay (was poking through fine tiles). Added `surface` vs `space` LOD budgets: surface goes to depth 12 (~10× finer underfoot) with fast refine-while-walking; space stays shallow/impostor. Rocks/ore only draw in surface mode. Water waves scale amp+freq per chunk depth via `aWaveScale`.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/planetInstance.ts`, `src/main.ts`, `src/worldgen/chunkBuffers.ts`
+- **Notes:** Surface mode when on-foot/landed below ~0.12 planet-radii altitude.
+
+### 2026-07-10 — LOD perf + behind-camera cull
+- **Summary:** Cut hitching from sync chunk builds: leaf cap ~280, ≤6 splits / ≤10 merges per frame, cheaper segs/skirts, throttled structure updates. Cull uses camera forward + tight surface bounds (not skirt-inflated spheres) so tiles behind the camera and off-frustum stay hidden.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`, `src/main.ts`
+- **Notes:** Impostor underlay still fills seam cracks; cull runs every frame even when structure work is skipped.
+
+### 2026-07-10 — LOD follow + seam fix
+- **Summary:** Detail now tracks the player while walking: UV coverage test, per-child merge (so spawn no longer pins the leaf budget), forced underfoot refine each frame, ring-first split budget, smoother concentric falloff. Black chunk lines mitigated by terrain-colored two-sided skirts (full relief drop), UV bleed, neighbor depth balancing, and a shrunk impostor underlay under active chunks so cracks never show sky.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`
+- **Notes:** Verified walk ~0.5 rad keeps underfoot depth ~9–10 while spawn collapses to ~3–4.
+
+### 2026-07-10 — Concentric player-centered LOD (rewrite)
+- **Summary:** Threw out spike/ring/keep-cone hacks. Every tile now has a target depth from angular distance to the *player* (fine underfoot → coarse outward). Each frame: merge anything finer than target (farthest first), then split anything coarser (nearest first). LOD focus uses player planet-local position, not the camera boom. Verified concentric depth rings while walking.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/planetInstance.ts`, `src/main.ts`, `scripts/test-lod-concentric.mjs`
+- **Notes:** Skirts still hide seam gaps. Budget reclaim never strips the near ring.
+
+### 2026-07-10 — LOD finally follows the player (angular bubble)
+- **Summary:** Spawn detail was locking the leaf budget inside a too-wide keep cone, so walking away left new ground coarse forever. LOD now collapses by *angle* outside a ~31° bubble every frame, then force-refines underfoot + ring + bubble pass. Deeper colored skirts hide chunk/LOD seams. Verified: after walking ~0.75 rad, underfoot depth stays 10 while spawn collapses to ~4.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`, `scripts/test-lod-follow.mjs`
+- **Notes:** KEEP_ANGLE 0.55 rad; collapse runs *before* refine so budget moves with the player.
+
+### 2026-07-10 — Nearby chunks refine by proximity
+- **Summary:** Large low-poly tiles beside the player stayed coarse because LOD used distance-to-*center* (centers looked far). Now uses distance to chunk bounds + a distance→target-depth table, splits nearest coarse leaves every frame before underfoot refine, and frees budget outside a keep cone so the bubble can catch up.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** Standing next to a coarse tile should subdivide it within a few frames without walking into its middle.
+
+### 2026-07-10 — LOD perf: cull + cheaper builds + seam balance
+- **Summary:** Cut hitching from sync chunk builds and overdraw. Frustum + horizon cull hide back-face / off-screen tiles; variable segment counts by depth; leaf/split budgets lowered; refine work spread across frames. Neighbor depth-balance pass + deeper skirts stitch LOD seams.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`
+- **Notes:** Coarse tiles 8–12 segs, fine 16–20; max ~8 splits/frame; ~360 leaf cap.
+
+### 2026-07-10 — Fix LOD freeze (safe 2-phase + correct underfoot)
+- **Summary:** LOD was refining the *wrong* tiles (cube UV inverse ignored `spherify`) and merging mid-walk (orphaned meshes / leaf-budget desync), so after a few seconds the world froze at coarse detail. Rewrote update as merge→free→force-refine→split phases; underfoot picks nearest child by angle. Added chunk edge skirts; denser chunk grids (24). Playwright walk stress: depth-10 / ~30u tiles stay under the player while moving.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`, `src/main.ts`, `scripts/test-lod.mjs`
+- **Notes:** `__dbg.lodDebug()` exposes leaves / depthUnderCam / impostor for probes.
+
+### 2026-07-10 — Distance LOD rewrite, equal fly axes
+- **Summary:** Replaced angular/force-refine LOD with classic geometric distance split/merge (edge vs camera distance + hysteresis) so detail follows the player. Impostor never draws under active chunks (fixes under-map pops). Removed non-working ESC LOD sliders. Fly mode uses one speed for tangent + vertical axes.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`, `src/config/settings.ts`, `src/ui/settingsMenu.ts`, `src/config/movement.ts`, `src/systems/playerMovement.ts`
+- **Notes:** Split when chunk edge > dist/3.2; merge when edge < dist/5.8. Impostor above ~2.5 planet-radii altitude.
+
+### 2026-07-10 — Finer LOD, chunked water, ESC LOD sliders
+- **Summary:** Near terrain refine depth ~10× finer (settings-driven). Liquid uses the same cube-sphere quadtree as land. Coarsest impostor only appears off-planet (past Far LOD altitude); on-world tiles never collapse below a mid floor. ESC settings: Near terrain detail, Detail distance, Far LOD altitude.
+- **Areas:** `src/config/settings.ts`, `src/ui/settingsMenu.ts`, `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`, `src/worldgen/planetInstance.ts`, `src/visuals/planetLiquid.ts`
+- **Notes:** Defaults: detail 1.2, distance 1.15, far altitude 2.8 planet-radii.
+
+### 2026-07-10 — LOD follows player while walking
+- **Summary:** Fixed stuck low-LOD away from spawn. Spawn deep-tiles were holding the leaf budget; far free used Euclidean thresholds too large to reclaim them. LOD now collapses by *angular* distance from the player each frame, then force-refines underfoot + a walking ring + look-ahead so detail moves with you.
+- **Areas:** `src/worldgen/cubeSphereLod.ts`
+- **Notes:** KEEP_ANGLE / REFINE_ANGLE tune the detail bubble around the player.
+
+### 2026-07-10 — Fix distant planets + LOD holes
+- **Summary:** Raised camera far plane to 25M so mega-scale planets/star are not clipped. Rewrote cube-sphere LOD to be hole-free (sync 4-child splits, impostor always underlays chunks, frustum cull off). Fog only while inside atmosphere so other worlds stay visible in space. Underfoot refine frees far-chunk budget so detail updates as you walk. Star meshes no longer frustum-culled at range.
+- **Areas:** `src/engine/renderer.ts`, `src/worldgen/cubeSphereLod.ts`, `src/main.ts`, `src/visuals/star.ts`
+- **Notes:** If a planet still looks coarse underfoot, leaf budget may be saturated — far tiles collapse to make room.
+
+### 2026-07-10 — Mega-scale planets + cube-sphere chunked LOD
+- **Summary:** Scaled home system ~50× (planet radii, orbits, star, atmospheres). Replaced whole-planet mesh LOD with cube-sphere quadtree chunked LOD (impostor at distance, adaptive face patches near surface, forced underfoot refine). Richer terrain FBM (micro-detail, dunes, terraces). Volumetric-style atmosphere shells + layered lit clouds. Kepler orbits frozen via `STATIC_ORBITS` (zero orbital velocity) for stability/perf while iterating. Ship cruise/warp/land altitudes and on-foot fly speeds raised for the new distances.
+- **Areas:** `src/config/scale.ts`, `src/config/ship.ts`, `src/config/movement.ts`, `src/config/star.ts`, `src/content/planets/*`, `src/content/station.ts`, `src/worldgen/cubeSphereLod.ts`, `src/worldgen/chunkBuffers.ts`, `src/worldgen/planetInstance.ts`, `src/worldgen/planet.ts`, `src/worldgen/orbits.ts`, `src/worldgen/generateSystem.ts`, `src/visuals/atmosphere.ts`, `src/visuals/planetLiquid.ts`, `src/visuals/planetRocks.ts`, `src/main.ts`
+- **Notes:** Toggle orbits with `STATIC_ORBITS` in `src/config/scale.ts`. Chunk LOD still tuning near-field poly density vs leaf budget; liquid remains a moderate full-sphere mesh (not chunked yet).
+
 ### 2026-07-09 — Known systems in map (preview → teleport)
 - **Summary:** System map (**M**) lists known star systems as lightweight defs. Selecting one previews orbits/planets/star in the map without generating meshes. **Teleport** loads the system and moves the player; **Discover system** adds another known entry. Removed instant **B**-key jump.
 - **Areas:** `src/content/systems/catalog.ts`, `src/ui/systemMap.ts`, `src/ui/hud.css`, `src/main.ts`, `index.html`

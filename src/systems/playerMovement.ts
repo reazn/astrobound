@@ -146,9 +146,14 @@ export function updatePlayerMovement(
       const vert =
         (input.held("Space") ? 1 : 0) -
         (input.held("ControlLeft") || input.held("ControlRight") ? 1 : 0);
-      target.copy(wish).multiplyScalar(flySpeed);
+      // Same speed on all axes: build a 3D wish (tangent + radial) then normalize.
+      target.copy(wish).addScaledVector(up, vert);
+      const tLen = target.length();
+      if (tLen > 1e-6) target.multiplyScalar(flySpeed / tLen);
+      else target.set(0, 0, 0);
+      const wantRadial = target.dot(up);
+      target.addScaledVector(up, -wantRadial);
       moveTowards(velTan, target, MOVEMENT.groundAccel * 1.4 * dt);
-      const wantRadial = vert * MOVEMENT.flyVerticalSpeed * flyMult * 0.35;
       radial += (wantRadial - radial) * Math.min(1, 8 * dt);
       e.prevPosition!.copy(pos);
       pos.addScaledVector(velTan, dt).addScaledVector(up, radial * dt);
@@ -158,9 +163,9 @@ export function updatePlayerMovement(
       up.copy(pos).normalize();
       m.up.copy(up);
       m.grounded = false;
-      const hs = velTan.length();
+      const hs = m.velocity.length();
       m.speed01 = Math.min(1.5, hs / (MOVEMENT.moveSpeed * MOVEMENT.flySpeedMult));
-      if (hs > 1.0) m.faceDir.copy(velTan).multiplyScalar(1 / hs);
+      if (velTan.length() > 1.0) m.faceDir.copy(velTan).normalize();
       continue;
     }
 

@@ -11,6 +11,7 @@ import { createWorld } from "./ecs/world";
 import type { Entity } from "./ecs/components";
 import { createPlanetInstance, type PlanetInstance } from "./worldgen/planetInstance";
 import { orbitPositionAt } from "./worldgen/orbits";
+import { STATIC_ORBITS } from "./config/scale";
 import { PLANET_REGISTRY, HOME_PLANET } from "./content/planets";
 import { STATION_NAME, STATION_RADIUS, STATION_ORBIT } from "./content/station";
 import { characterById, CHARACTERS } from "./content/characters";
@@ -36,6 +37,7 @@ import { createWarpFx } from "./visuals/warpFx";
 import { speedRelativeToPlanet, orbitalFrameVelocity } from "./systems/shipGravity";
 import { createSettingsMenu, type SettingsMenu } from "./ui/settingsMenu";
 import { createLoadingScreen } from "./ui/loadingScreen";
+import { createLodDebugLegend } from "./ui/lodDebugLegend";
 import { buildWorldSnapshot } from "./net/buildSnapshot";
 import { findFlatLandingNormal, landingRestPosition } from "./systems/landingSite";
 import {
@@ -407,7 +409,21 @@ async function main() {
   };
 
   const placeOnPlanet = (planet: PlanetInstance) => {
-    const seed = new Vector3(rng.world() * 2 - 1, rng.world() * 2 - 1, rng.world() * 2 - 1).normalize();
+    // Bias spawn toward mid-elevation land near coasts for richer first views.
+    let seed = new Vector3(rng.world() * 2 - 1, rng.world() * 2 - 1, rng.world() * 2 - 1).normalize();
+    let bestScore = -1e9;
+    for (let i = 0; i < 48; i++) {
+      const cand = new Vector3(rng.world() * 2 - 1, rng.world() * 2 - 1, rng.world() * 2 - 1).normalize();
+      const sr = planet.planet.surfaceRadius(cand.x, cand.y, cand.z);
+      const hNorm = (sr - planet.planet.minR) / Math.max(1, planet.planet.maxR - planet.planet.minR);
+      let score = 1 - Math.abs(hNorm - 0.42) * 2;
+      if (planet.planet.def.liquid) {
+        const aboveSea = sr - planet.planet.seaLevel;
+        if (aboveSea < 8) score -= 5;
+        else score += Math.max(0, 1.2 - Math.abs(aboveSea - planet.planet.amplitude * 0.08) / (planet.planet.amplitude * 0.12));
+      }
+      if (score > bestScore) { bestScore = score; seed = cand; }
+    }
     const up = findFlatLandingNormal(planet, seed, new Vector3());
     let r = planet.planet.surfaceRadius(up.x, up.y, up.z) + 2;
     if (planet.planet.def.liquid) r = Math.max(r, planet.planet.seaLevel + 2);
@@ -493,16 +509,28 @@ async function main() {
     }
   };
 
+  let lodDebugOn = false;
+  const lodLegend = createLodDebugLegend();
+
   const simStep = (dt: number) => {
     game.time += dt;
     simTick++;
     for (const p of planets) p.prevSystemPosition.copy(p.systemPosition);
     if (stationEnabled) stationPrevPos.copy(stationSystemPos);
-    for (const p of planets) orbitPositionAt(p.def.orbit, game.time, p.systemPosition);
-    if (stationEnabled) orbitPositionAt(STATION_ORBIT, game.time, stationSystemPos);
+    const orbitT = STATIC_ORBITS ? 0 : game.time;
+    for (const p of planets) orbitPositionAt(p.def.orbit, orbitT, p.systemPosition);
+    if (stationEnabled) orbitPositionAt(STATION_ORBIT, orbitT, stationSystemPos);
 
     if (input.justPressed("KeyN") && state.mode === "ship") {
       settings.maintainMomentum = !settings.maintainMomentum;
+    }
+    if (input.justPressed("KeyL")) {
+      lodDebugOn = !lodDebugOn;
+      for (const p of planets) p.setLodDebug(lodDebugOn);
+      lodLegend.setVisible(lodDebugOn);
+      hud.setPrompt(lodDebugOn
+        ? "LOD debug ON — L to toggle · LOD 0 = finest · see key on right"
+        : "LOD debug OFF");
     }
 
     updatePossession(state, {
@@ -651,7 +679,30 @@ async function main() {
       interpBody.lerpVectors(p.prevSystemPosition, p.systemPosition, alpha);
       renderRelative(interpBody, renderOrigin, tmpVec);
       p.lod.position.copy(tmpVec);
-      p.updateLod(rc.camera);
+      const onPlanetLocal =
+        p === state.currentPlanet && (
+          state.mode === "onFoot"
+          || s.mode === "landed"
+          || s.mode === "launching"
+          || s.mode === "landing"
+        );
+      // Deep spherical LOD whenever you're near this world (walk or fly).
+      // Altitude must not dump detail — the bubble is 3D around the player/ship.
+      let lodMode: "surface" | "space" = "space";
+      let lodFocus: typeof interpLocal | undefined;
+      if (onPlanetLocal) {
+        lodMode = "surface";
+        lodFocus = interpLocal;
+      } else if (p === focusPlanet && state.mode === "ship") {
+        const local = shipLocalCam.lengthSq() > 1e-6
+          ? shipLocalCam
+          : camPlanetLocal.copy(rc.camera.position).sub(p.lod.position);
+        if (local.length() < p.planet.maxR * 6) {
+          lodMode = "surface";
+          lodFocus = local;
+        }
+      }
+      p.updateLod(rc.camera, lodFocus, lodMode);
       // Keep limb glow / day bias current even for non-focus planets.
       atmoUp.copy(rc.camera.position).sub(p.lod.position);
       if (atmoUp.lengthSq() > 1e-6) atmoUp.normalize();
@@ -670,12 +721,30 @@ async function main() {
     stationVisual.update(dtReal);
 
     sunDir.copy(STAR_POS).sub(renderOrigin).normalize();
-    rc.sun.position.set(0, 0, 0).addScaledVector(sunDir, 220);
-    rc.sun.target.position.set(0, 0, 0);
+    // Local shadow volume around the possessed entity (floating origin ≈ player).
+    // Full-planet directional shadows are not viable at this scale.
+    const shadowFocus = state.mode === "onFoot"
+      ? character.object.position
+      : shipModel.group.position;
+    const surfaceShadow = !!(focusPlanet && (
+      state.mode === "onFoot"
+      || s.mode === "landed"
+      || s.mode === "landing"
+      || s.mode === "launching"
+      || (rc.camera.position.distanceTo(focusPlanet.lod.position) - focusPlanet.planet.maxR) < 500
+    ));
+    if (surfaceShadow) {
+      rc.sun.target.position.copy(shadowFocus);
+      rc.sun.position.copy(shadowFocus).addScaledVector(sunDir, 160);
+      rc.sun.castShadow = true;
+      rc.sun.shadow.camera.updateProjectionMatrix();
+    } else {
+      rc.sun.position.set(0, 0, 0).addScaledVector(sunDir, 220);
+      rc.sun.target.position.set(0, 0, 0);
+      rc.sun.castShadow = false;
+    }
     rc.sun.target.updateMatrixWorld();
-    // Directional shadow maps paint a hard orthographic square on planet-scale
-    // terrain — leave them off; toon lighting still reads fine without them.
-    rc.sun.castShadow = false;
+    rc.sun.updateMatrixWorld();
 
     // Starfield rides the camera so it stays infinitely far; dimmed by atmosphere.
     starfield.position.copy(rc.camera.position);
@@ -701,13 +770,15 @@ async function main() {
         rc.camera.position.distanceTo(focusPlanet.lod.position) - focusPlanet.planet.maxR,
       );
       const atmoH = Math.max(60, focusPlanet.def.atmosphereThickness);
-      if (camAlt < atmoH * 0.9) {
-        rc.disableFog();
-      } else {
-        const t = Math.min(1, (camAlt - atmoH * 0.9) / (atmoH * 1.1));
-        const fogNear = focusPlanet.def.fogNear * (2.0 + t);
-        const fogFar = focusPlanet.def.fogFar * (1.8 + t);
+      // Fog only while inside the atmosphere shell. Above it, clear fog so
+      // other planets / the star stay visible across mega-scale distances.
+      if (camAlt < atmoH * 0.85) {
+        const t = Math.min(1, camAlt / Math.max(1, atmoH));
+        const fogNear = focusPlanet.def.fogNear * (0.55 + t * 0.5);
+        const fogFar = focusPlanet.def.fogFar * (0.7 + t * 0.5);
         rc.setFog(focusPlanet.def.palette.atmosphere, fogNear, fogFar);
+      } else {
+        rc.disableFog();
       }
       // Day/night lighting: dim hemi + sun on the night side.
       rc.hemi.color.set(focusPlanet.def.palette.atmosphere);
@@ -858,6 +929,11 @@ async function main() {
       hud.setCompassVisible(false);
     }
 
+    if (lodDebugOn) {
+      const focus = focusPlanet ?? home;
+      lodLegend.update(focus.terrainLod.debug());
+    }
+
     rc.render();
     worldMarkers.render(rc.scene, rc.camera);
   };
@@ -880,6 +956,12 @@ async function main() {
   (window as unknown as { __dbg: unknown }).__dbg = {
     player, ship, world, game, state, planets, home, physics,
     onFootRig, camera: rc.camera, simStep, renderStep, input, rc,
+    lodDebug: () => home.terrainLod.debug(),
+    setLodDebug: (on: boolean) => {
+      lodDebugOn = on;
+      for (const p of planets) p.setLodDebug(on);
+      lodLegend.setVisible(on);
+    },
     getSnapshot: () => buildWorldSnapshot(
       simTick, game.time, "solar-001", ship, player, planets, stationSystemPos,
       state.currentPlanet.def.id, state.dockBay,
