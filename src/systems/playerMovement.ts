@@ -102,6 +102,7 @@ export function updatePlayerMovement(
   rocks?: RockColliders,
   ore?: RockColliders,
   inventory?: PlayerInventory,
+  canDebugFly = true,
 ) {
   for (const e of world.with("player", "movement", "position", "stats")) {
     const m = e.movement;
@@ -111,7 +112,7 @@ export function updatePlayerMovement(
     m.didSlide = false;
     m.inLiquid = false;
 
-    if (input.justPressed("KeyV")) {
+    if (canDebugFly && input.justPressed("KeyV")) {
       m.flying = !m.flying;
       if (m.flying) {
         m.sliding = false;

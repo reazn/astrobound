@@ -36,7 +36,10 @@ import { createWorldMarkers, type MarkerBody } from "./systems/worldMarkers";
 import { createSystemMap, type MapBody } from "./ui/systemMap";
 import {
   spawnWorldDrop, updateWorldDrops, rebindWorldDropOccluders,
+  tryPickupDrop, removeWorldDrop, getWorldDrops, type WorldDrop,
 } from "./systems/worldDrops";
+import { markOreDepleted, pulseOreHit } from "./systems/oreMining";
+import type { FocusedOre } from "./systems/oreMining";
 import { createInventoryUI } from "./ui/inventory";
 import { createPlayerInventory } from "./inventory/playerInventory";
 import { settings } from "./config/settings";
@@ -50,6 +53,19 @@ import { speedRelativeToPlanet, orbitalFrameVelocity } from "./systems/shipGravi
 import { createSettingsMenu, type SettingsMenu } from "./ui/settingsMenu";
 import { createLoadingScreen } from "./ui/loadingScreen";
 import { buildWorldSnapshot } from "./net/buildSnapshot";
+import {
+  createConnectedNetAdapter,
+  netModeFromUrl,
+  serverUrlFromParams,
+  joinTokenFromParams,
+  createGuestSession,
+  fetchGuestToken,
+} from "./net/createNetAdapter";
+import { createNetBridge } from "./net/netBridge";
+import { syncInventoryFromNet } from "./inventory/syncFromNet";
+import { createChatPanel } from "./ui/chatPanel";
+import { createGroupCompass } from "./ui/groupCompass";
+import { canUseDebugFly } from "./sim/validate";
 import { findFlatLandingNormal, landingRestPosition } from "./systems/landingSite";
 import {
   clearCameraOccluders, registerCameraOccluder,
@@ -161,8 +177,54 @@ async function main() {
   const face0 = tangentAt(spawnUp, new Vector3());
 
   const world = createWorld();
+  const netMode = netModeFromUrl();
+  let netSession = createGuestSession("Pilot");
+  netSession.characterId = settings.selectedCharacterId;
+  netSession.shipId = settings.selectedShipId;
+  let joinToken = joinTokenFromParams();
+
+  if (netMode === "remote" && !joinToken) {
+    const auth = await fetchGuestToken(serverUrlFromParams(), netSession.displayName);
+    if (auth) {
+      joinToken = auth.token;
+      netSession = {
+        ...auth.player,
+        characterId: settings.selectedCharacterId,
+        shipId: settings.selectedShipId,
+      };
+    } else {
+      console.warn("[net] auth/guest failed — starting offline (local adapter)");
+    }
+  }
+
+  const requestedMode = netMode === "remote" && joinToken ? "remote" as const : "local" as const;
+
+  const netAdapterResult = await createConnectedNetAdapter({
+    session: netSession,
+    seed: "solar-001",
+    systemId: "home-solara",
+    mode: requestedMode,
+    serverUrl: serverUrlFromParams(),
+    joinToken,
+  });
+  const netAdapter = netAdapterResult.adapter;
+  netSession = netAdapter.session;
+  let netFallbackReason = netAdapterResult.fallbackReason ?? "";
+  if (netFallbackReason) {
+    console.warn("Multiplayer unavailable — playing offline:", netFallbackReason);
+  }
+
+  const netBridge = createNetBridge(netAdapter, world, rc.scene);
+  const chatPanel = createChatPanel(netAdapter);
+  const groupCompass = createGroupCompass();
+  void chatPanel;
+
   const player: Entity = world.add({
     player: true as const,
+    isLocal: true,
+    playerId: netSession.playerId,
+    networkId: netSession.playerId,
+    displayName: netSession.displayName,
     position: spawnPos.clone(),
     prevPosition: spawnPos.clone(),
     movement: {
@@ -186,6 +248,9 @@ async function main() {
   const shipFaceDir = tangentAt(shipUp, face0.clone());
 
   const ship: Entity = world.add({
+    networkId: `${netSession.playerId}-ship`,
+    isLocal: true,
+    playerId: netSession.playerId,
     ship: {
       mode: "landed", velocity: new Vector3(), orientation: new Quaternion(),
       throttle: 0, boostFuel: 1, boosting: false,
@@ -262,6 +327,40 @@ async function main() {
     appearance: {
       onShipChange: swapShip,
       onCharacterChange: swapCharacter,
+    },
+    getFriends: () => {
+      const friends = netAdapter.getFriends();
+      const peerIds = new Set(friends.map((f) => f.playerId));
+      const colors = ["#7fd6ff", "#6fbf73", "#e8623a", "#b56bff", "#ffb85a"];
+      let i = 0;
+      for (const peer of netAdapter.getPeers()) {
+        if (peer.playerId === netAdapter.session.playerId) continue;
+        if (peerIds.has(peer.playerId)) {
+          const f = friends.find((x) => x.playerId === peer.playerId);
+          if (f) {
+            f.online = true;
+            f.presence = "In system";
+          }
+          continue;
+        }
+        friends.push({
+          playerId: peer.playerId,
+          displayName: peer.displayName,
+          online: true,
+          presence: "In system",
+          color: colors[i++ % colors.length],
+        });
+      }
+      return friends;
+    },
+    onAddFriend: (displayName) => {
+      void netAdapter.requestEvent({ type: "friend.add", displayName }).then(() => menu.refreshFriends());
+    },
+    onInviteGroup: (playerId) => {
+      void netAdapter.requestEvent({ type: "group.invite", targetPlayerId: playerId });
+    },
+    onLeaveGroup: () => {
+      void netAdapter.requestEvent({ type: "group.leave" });
     },
   });
   const hud = createSpaceHud(document.body);
@@ -380,8 +479,79 @@ async function main() {
       const n = dropSpawnPos.clone().normalize();
       const r = state.currentPlanet.planet.surfaceRadius(n.x, n.y, n.z) + 0.35;
       dropSpawnPos.copy(n).multiplyScalar(r);
-      spawnWorldDrop(state.currentPlanet, dropSpawnPos, itemId, qty);
+      void netAdapter.requestEvent({
+        type: "drop.spawn",
+        itemId,
+        qty,
+        planetId: state.currentPlanet.def.id,
+        position: [dropSpawnPos.x, dropSpawnPos.y, dropSpawnPos.z],
+      }).then((res) => {
+        if (res.ok) spawnWorldDrop(state.currentPlanet, dropSpawnPos, itemId, qty);
+      });
     },
+    onMove: async (from, to) => {
+      const res = await netAdapter.requestEvent({
+        type: "inventory.move",
+        from: from.kind === "bag" ? { kind: "bag", index: from.index } : { kind: "equip", slot: from.slot },
+        to: to.kind === "bag" ? { kind: "bag", index: to.index } : { kind: "equip", slot: to.slot },
+      });
+      if (res.ok) syncInventoryFromNet(playerInventory, netAdapter.getInventory());
+      return res.ok;
+    },
+    onEquip: async (from) => {
+      const res = await netAdapter.requestEvent({
+        type: "inventory.equip",
+        from: from.kind === "bag" ? { kind: "bag", index: from.index } : { kind: "equip", slot: from.slot },
+      });
+      if (res.ok) syncInventoryFromNet(playerInventory, netAdapter.getInventory());
+      return res.ok;
+    },
+    onUnequip: async (from) => {
+      if (from.kind !== "equip") return false;
+      const res = await netAdapter.requestEvent({ type: "inventory.unequip", slot: from.slot });
+      if (res.ok) syncInventoryFromNet(playerInventory, netAdapter.getInventory());
+      return res.ok;
+    },
+    onSplit: async (from, amount) => {
+      const res = await netAdapter.requestEvent({
+        type: "inventory.split",
+        from: from.kind === "bag" ? { kind: "bag", index: from.index } : { kind: "equip", slot: from.slot },
+        amount,
+      });
+      if (res.ok) syncInventoryFromNet(playerInventory, netAdapter.getInventory());
+      return res.ok;
+    },
+  });
+
+  let mineCooldown = 0;
+  netAdapter.onInventory((snap) => {
+    syncInventoryFromNet(playerInventory, snap);
+    inventoryUI.refresh();
+  });
+  netAdapter.onPeers(() => menu.refreshFriends());
+  netAdapter.onEvent((ev) => {
+    if (ev.type === "drop.spawn") {
+      const planet = planets.find((p) => p.def.id === ev.planetId);
+      if (!planet) return;
+      const already = getWorldDrops().some((d) => d.id === ev.dropId);
+      if (already) return;
+      const pos = new Vector3(ev.position[0], ev.position[1], ev.position[2]);
+      spawnWorldDrop(planet, pos, ev.itemId, ev.qty, ev.dropId);
+    }
+    if (ev.type === "drop.pickup" || ev.type === "drop.despawn") {
+      const drop = getWorldDrops().find((d) => d.id === ev.dropId);
+      if (drop) removeWorldDrop(drop);
+    }
+    if (ev.type === "mine.depleted") {
+      const planet = planets.find((p) => p.def.id === ev.planetId) ?? state.currentPlanet;
+      markOreDepleted(ev.nodeId, planet.ore);
+    }
+    if (ev.type === "mine.hit") {
+      const planet = planets.find((p) => p.def.id === (ev as { planetId?: string }).planetId)
+        ?? state.currentPlanet;
+      pulseOreHit(ev.nodeId, planet.ore);
+      if (ev.playerId === netAdapter.session.playerId) inventoryUI.refresh();
+    }
   });
 
   const interpLocal = new Vector3();
@@ -554,6 +724,16 @@ async function main() {
       rebuildNavBodies();
       placeOnPlanet(home);
       systemMap.setCatalog(knownSystems, activeSystemId, previewSystemId);
+      if (netAdapter.mode === "remote" && netAdapter.switchSystem) {
+        hud.setPrompt(`Rejoining net room: ${sys.id}…`);
+        try {
+          await netAdapter.switchSystem(sys.id, sys.seed);
+          netFallbackReason = "";
+        } catch (err) {
+          console.warn("[net] system room switch failed", err);
+          netFallbackReason = String(err);
+        }
+      }
       hud.setPrompt(
         `Arrived: ${sys.name} · ${sys.star.type} star · ${planets.length} worlds · landed on ${home.def.name}`,
       );
@@ -568,7 +748,17 @@ async function main() {
 
   const simStep = (dt: number) => {
     const simT0 = performance.now();
-    game.time += dt;
+    if (mineCooldown > 0) mineCooldown = Math.max(0, mineCooldown - dt);
+    if (netAdapter.mode === "remote") {
+      const sync = netAdapter.timeSync();
+      if (sync.time > 0) {
+        const drift = sync.time - game.time;
+        if (Math.abs(drift) > 0.5) game.time = sync.time;
+        else game.time += drift * 0.08;
+      }
+    } else {
+      game.time += dt;
+    }
     simTick++;
     for (const p of planets) p.prevSystemPosition.copy(p.systemPosition);
     if (stationEnabled) stationPrevPos.copy(stationSystemPos);
@@ -601,6 +791,35 @@ async function main() {
       stationEnabled,
       getAimDir: () => aimDirSystem,
       inventory: playerInventory,
+      canDebugFly: netAdapter.mode === "local" || canUseDebugFly(netAdapter.session.role),
+      tryPickup: (drop: WorldDrop) => {
+        if (netAdapter.mode === "local") {
+          if (!tryPickupDrop(drop, playerInventory)) return false;
+          void netAdapter.requestEvent({ type: "drop.pickup", dropId: drop.id });
+          return true;
+        }
+        void netAdapter.requestEvent({ type: "drop.pickup", dropId: drop.id }).then((res) => {
+          if (res.ok) removeWorldDrop(drop);
+        });
+        return false;
+      },
+      tryMine: (ore: FocusedOre) => {
+        if (mineCooldown > 0) return;
+        mineCooldown = 0.35;
+        void netAdapter.requestEvent({
+          type: "mine.hit",
+          nodeId: ore.nodeId,
+          position: [ore.localPos.x, ore.localPos.y, ore.localPos.z],
+        }).then((res) => {
+          if (!res.ok) return;
+          pulseOreHit(ore.nodeId, state.currentPlanet.ore);
+          for (const ev of res.events ?? (res.event ? [res.event] : [])) {
+            if (ev.type === "mine.depleted") markOreDepleted(ev.nodeId, state.currentPlanet.ore);
+          }
+          syncInventoryFromNet(playerInventory, netAdapter.getInventory());
+          inventoryUI.refresh();
+        });
+      },
       getCamLook: () => {
         rc.camera.getWorldDirection(camForward);
         return {
@@ -626,6 +845,9 @@ async function main() {
     }
 
     physics.step();
+    netBridge.tick(dt);
+    netBridge.syncTransform(player, ship, state, state.boardPhase);
+    netBridge.syncRemotes(state, player, planets, ship);
     input.clearFrame();
     simMsAccum += performance.now() - simT0;
   };
@@ -1099,6 +1321,12 @@ async function main() {
       camPos: rc.camera.position,
     });
 
+    netBridge.updateRemotes(dtReal, planets, stationSystemPos, renderOrigin);
+    groupCompass.update(
+      [renderOrigin.x, renderOrigin.y, renderOrigin.z],
+      netAdapter.getGroupBeacons(),
+    );
+
     lastPrepMs = performance.now() - prepT0;
     const gpuT0 = performance.now();
     rc.render();
@@ -1161,6 +1389,11 @@ async function main() {
         uncapped: gameLoop.uncapped,
         flashlight: flashlight.enabled,
         entities: debugEntities.counts,
+        net: (() => {
+          const info = netAdapter.getDebugInfo(game.time);
+          if (netFallbackReason) info.fallbackReason = netFallbackReason;
+          return info;
+        })(),
         extras: [
           { label: "Asteroids", tris: meshTriangleCount(asteroids.mesh) },
           { label: "Ship", tris: countVisibleTriangles(shipModel.group) },
@@ -1196,9 +1429,10 @@ async function main() {
     player, ship, world, game, state, planets, home, physics,
     onFootRig, camera: rc.camera, simStep, renderStep, input, rc,
     getSnapshot: () => buildWorldSnapshot(
-      simTick, game.time, "solar-001", ship, player, planets, stationSystemPos,
-      state.currentPlanet.def.id, state.dockBay,
+      simTick, game.time, "solar-001", activeSystemId, ship, player, planets, stationSystemPos,
+      state.currentPlanet.def.id, state.dockBay, netAdapter.getPeers(),
     ),
+    net: netAdapter,
   };
 }
 

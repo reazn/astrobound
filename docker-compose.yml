@@ -1,0 +1,32 @@
+services:
+  server:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      MEMORY_STORE: ${MEMORY_STORE:-1}
+      DATABASE_URL: ${DATABASE_URL:-}
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: "2567"
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      MAX_CLIENTS_PER_ROOM: ${MAX_CLIENTS_PER_ROOM:-32}
+      INSTANCE_NAME: ${INSTANCE_NAME:-astrobound-1}
+    ports:
+      - "2567:2567"
+
+  # Optional durable DB. Leave MEMORY_STORE=1 for co-presence without migrations.
+  postgres:
+    profiles: ["db"]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: astrobound
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-astrobound}
+      POSTGRES_DB: astrobound
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:

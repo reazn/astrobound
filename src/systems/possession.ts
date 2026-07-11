@@ -12,6 +12,7 @@ import { getItem } from "../content/items";
 import {
   findFocusedDrop, tryPickupDrop, type WorldDrop,
 } from "./worldDrops";
+import { findFocusedOre, type FocusedOre } from "./oreMining";
 import { updateShipFlight, beginWarp, stopWarp, getWarpLockName } from "./shipFlight";
 import { syncVelocityToPlanet } from "./shipGravity";
 import {
@@ -51,6 +52,9 @@ export interface PossessionDeps {
   // the cone matches what the player sees through the crosshair.
   getAimDir: () => Vector3;
   inventory: PlayerInventory;
+  canDebugFly?: boolean;
+  tryPickup?: (drop: WorldDrop) => boolean;
+  tryMine?: (ore: FocusedOre) => void;
   getCamLook?: () => { pos: Vector3; forward: Vector3; planetLodPos: Vector3 };
   onPickup?: () => void;
 }
@@ -65,6 +69,7 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
   const s = ship.ship!;
   STAR_BODY.radius = deps.starRadius;
 
+  const { canDebugFly } = deps;
   if (state.mode === "onFoot") {
     if (state.boardPhase === "boarding") {
       hud.setPrompt("Boarding…");
@@ -79,7 +84,7 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
     const ore = state.currentPlanet.ore;
     updatePlayerMovement(
       world, state.currentPlanet.planet, input, deps.onFootForward, dt,
-      rocks, ore, deps.inventory,
+      rocks, ore, deps.inventory, canDebugFly === true,
     );
     const m = player.movement!;
     deps.character.setBindPose(m.hoverboarding);
@@ -121,12 +126,31 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
         const qty = focused.qty > 1 ? ` ×${focused.qty}` : "";
         hud.setPrompt(`Press E to pick up ${name}${qty}`);
         if (input.justPressed("KeyE")) {
-          if (tryPickupDrop(focused, deps.inventory)) deps.onPickup?.();
+          const picked = deps.tryPickup
+            ? deps.tryPickup(focused)
+            : tryPickupDrop(focused, deps.inventory);
+          if (picked) deps.onPickup?.();
         }
-      } else if (m.hoverboarding) {
-        hud.setPrompt("Hoverboard · Shift boost · Space jump · A/D air roll · H stow");
       } else {
-        hud.clearPrompt();
+        let oreFocus: FocusedOre | null = null;
+        if (deps.getCamLook) {
+          const look = deps.getCamLook();
+          oreFocus = findFocusedOre(
+            state.currentPlanet,
+            player.position!,
+            look.pos,
+            look.forward,
+            look.planetLodPos,
+          );
+        }
+        if (oreFocus) {
+          hud.setPrompt(`Hold E to mine ${oreFocus.kind}`);
+          if (input.held("KeyE")) deps.tryMine?.(oreFocus);
+        } else if (m.hoverboarding) {
+          hud.setPrompt("Hoverboard · Shift boost · Space jump · A/D air roll · H stow");
+        } else {
+          hud.clearPrompt();
+        }
       }
     }
     return;

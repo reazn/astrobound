@@ -24,6 +24,10 @@ export interface InventoryCallbacks {
   onToggle: (open: boolean) => void;
   canOpen?: () => boolean;
   onDropItem?: (itemId: string, qty: number) => void;
+  onMove?: (from: InvLoc, to: InvLoc) => boolean | Promise<boolean>;
+  onEquip?: (from: InvLoc) => boolean | Promise<boolean>;
+  onUnequip?: (from: InvLoc) => boolean | Promise<boolean>;
+  onSplit?: (from: InvLoc, amount: number) => boolean | Promise<boolean>;
 }
 
 type ItemRarity = ItemDef["rarity"];
@@ -220,10 +224,12 @@ export function createInventoryUI(
       const item = resolveItem(stack);
       if (!stack || !item) return;
       if (loc.kind === "bag" && item.equipSlot) {
-        tryEquip(inv, { kind: "bag", index: loc.index });
+        const ok = callbacks.onEquip
+          ? callbacks.onEquip({ kind: "bag", index: loc.index })
+          : tryEquip(inv, { kind: "bag", index: loc.index });
         tip.hidden = true;
         stopItemPreview();
-        paint();
+        void Promise.resolve(ok).then(() => paint());
       }
     });
     el.addEventListener("contextmenu", (e) => {
@@ -325,7 +331,12 @@ export function createInventoryUI(
     const from = dragFrom;
     if (from) {
       const target = slotFromPoint(e.clientX, e.clientY);
-      if (target) tryMove(inv, from, target);
+      if (target) {
+        const moved = callbacks.onMove
+          ? callbacks.onMove(from, target)
+          : tryMove(inv, from, target);
+        void Promise.resolve(moved).then(() => paint());
+      }
     }
     endDrag();
     paint();
@@ -404,16 +415,20 @@ export function createInventoryUI(
 
     if (loc.kind === "bag" && item.equipSlot) {
       addAction("Equip", true, () => {
-        tryEquip(inv, { kind: "bag", index: loc.index });
+        const ok = callbacks.onEquip
+          ? callbacks.onEquip({ kind: "bag", index: loc.index })
+          : tryEquip(inv, { kind: "bag", index: loc.index });
         hideMenu();
-        paint();
+        void Promise.resolve(ok).then(() => paint());
       });
     }
     if (loc.kind === "equip") {
       addAction("Unequip", findEmptyBagSlot(inv) >= 0, () => {
-        tryUnequip(inv, { kind: "equip", slot: loc.slot });
+        const ok = callbacks.onUnequip
+          ? callbacks.onUnequip({ kind: "equip", slot: loc.slot })
+          : tryUnequip(inv, { kind: "equip", slot: loc.slot });
         hideMenu();
-        paint();
+        void Promise.resolve(ok).then(() => paint());
       });
     }
     if (item.stackable && qty > 1) {
@@ -485,11 +500,15 @@ export function createInventoryUI(
     ok.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      splitStack(inv, loc.kind === "bag"
-        ? { kind: "bag", index: loc.index }
-        : { kind: "equip", slot: loc.slot }, Number(range.value));
+      const from = loc.kind === "bag"
+        ? { kind: "bag" as const, index: loc.index }
+        : { kind: "equip" as const, slot: loc.slot };
+      const amount = Number(range.value);
+      const okSplit = callbacks.onSplit
+        ? callbacks.onSplit(from, amount)
+        : splitStack(inv, from, amount);
       hideMenu();
-      paint();
+      void Promise.resolve(okSplit).then(() => paint());
     });
 
     body.append(row, ok);

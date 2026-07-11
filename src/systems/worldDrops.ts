@@ -61,6 +61,7 @@ export function spawnWorldDrop(
   localPos: Vector3,
   itemId: string,
   qty: number,
+  forcedId?: string,
 ): WorldDrop | null {
   const make = getItemModelBuilder(itemId);
   if (!make || qty < 1) return null;
@@ -105,7 +106,7 @@ export function spawnWorldDrop(
   root.position.copy(seated);
   planet.lod.add(root);
 
-  const id = `drop-${nextId++}`;
+  const id = forcedId ?? `drop-${nextId++}`;
   const drop: WorldDrop = {
     id,
     planetId: planet.def.id,

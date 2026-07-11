@@ -3,6 +3,7 @@ import type { PlanetInstance } from "../worldgen/planetInstance";
 import { LOD_DEBUG_COLORS, type TerrainLodLevel } from "../worldgen/planetInstance";
 import { countVisibleTriangles } from "../engine/meshStats";
 import type { DebugEntityCounts } from "./debugEntities";
+import type { NetConnectionDebug } from "../net/adapterTypes";
 
 export interface DebugTiming {
   simMs: number;
@@ -32,6 +33,7 @@ export interface DebugOverlayFrame {
   flashlight: boolean;
   entities?: DebugEntityCounts;
   extras?: { label: string; tris: number }[];
+  net?: NetConnectionDebug | null;
 }
 
 export interface DebugOverlay {
@@ -348,6 +350,42 @@ export function createDebugOverlay(root: HTMLElement): DebugOverlay {
       }).join("");
 
       right.innerHTML =
+        `<div class="${DEBUG_LABEL_CLASS}">Net / multiplayer</div>` +
+        (frame.net
+          ? (
+            `<div class="${DEBUG_LINE_CLASS}"><span class="font-semibold ${frame.net.connected ? "text-[#7dffb0]" : "text-[#e8623a]"}">${frame.net.mode}${frame.net.connected ? " · connected" : " · offline"}</span></div>` +
+            `<div class="${DEBUG_LINE_CLASS}">url: ${frame.net.serverUrl}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">http: ${frame.net.httpBase}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">systemId: ${frame.net.systemId}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">seed: ${frame.net.seed}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">room: ${frame.net.roomId || "—"}` +
+            ` · ${frame.net.roomClients}/${frame.net.roomMaxClients}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">session: ${frame.net.sessionId || "—"}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">player: ${frame.net.displayName}` +
+            ` (${frame.net.playerId.slice(0, 12)}${frame.net.playerId.length > 12 ? "…" : ""})` +
+            ` · ${frame.net.role}${frame.net.guest ? " · guest" : ""}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">peers visible ${frame.net.remoteVisible}` +
+            ` · snap ${frame.net.peerCount}` +
+            ` · group ${frame.net.groupBeaconCount}` +
+            ` · drops ${frame.net.dropCount}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">inv rev ${fmtInt(frame.net.inventoryRevision)}` +
+            ` · pending ev ${frame.net.pendingEvents}</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">srv tick ${fmtInt(frame.net.serverTick)}` +
+            ` · srv t ${fmt(frame.net.serverTime, 1)}s` +
+            ` · drift ${fmt(frame.net.timeDriftSec, 2)}s</div>` +
+            `<div class="${DEBUG_LINE_CLASS}">rtt~ ${fmt(frame.net.rttEstimateMs, 0)} ms` +
+            ` · tx ${fmtInt(frame.net.transformsSent)}` +
+            ` · peersΔ ${fmtInt(frame.net.peersRecv)}` +
+            ` · evΔ ${fmtInt(frame.net.eventsRecv)}</div>` +
+            (frame.net.lastRejectReason
+              ? `<div class="${DEBUG_LINE_CLASS} text-[#ffb85a]">reject: ${frame.net.lastRejectReason}</div>`
+              : `<div class="${DEBUG_LINE_CLASS}">reject: —</div>`) +
+            (frame.net.fallbackReason
+              ? `<div class="${DEBUG_LINE_CLASS} text-[#ffb85a]">fallback: ${frame.net.fallbackReason}</div>`
+              : "")
+          )
+          : `<div class="${DEBUG_MUTED_CLASS}">no adapter</div>`) +
+        DEBUG_SEP +
         `<div class="${DEBUG_LABEL_CLASS}">Terrain LOD (tinted)</div>` +
         legend +
         `<div class="mb-1.5 text-[11px] text-[rgba(200,220,240,0.55)]">Rendered terrain · sorted by tris</div>` +
@@ -357,7 +395,7 @@ export function createDebugOverlay(root: HTMLElement): DebugOverlay {
         `<div class="mb-1.5 text-[11px] text-[rgba(200,220,240,0.55)]">total ${fmtInt(sceneTris)} · drawn ${fmtInt(drawnTris)}</div>` +
         `<div class="flex flex-col gap-0.5">${catTable}</div>` +
         DEBUG_SEP +
-        `<div class="${DEBUG_MUTED_CLASS}">Debug on = uncapped frame loop (not stuck at monitor Hz). F flashlight · wireframe boxes = entities.</div>`;
+        `<div class="${DEBUG_MUTED_CLASS}">Debug on = uncapped frame loop (not stuck at monitor Hz). F flashlight · wireframe boxes = entities. MP: ?mp=1&amp;server=wss://host</div>`;
     },
     dispose() {
       el.remove();

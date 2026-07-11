@@ -4,7 +4,36 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
-### 2026-07-11 — Lift XP level badge above bar
+### 2026-07-11 — System shards + net debug panel
+- **Summary:** Colyseus `system` rooms now `filterBy(["systemId"])` (different systems = different rooms; same system auto-shards at `MAX_CLIENTS_PER_ROOM`). Map jump rejoins the target system room in MP. L-debug right panel shows connect/room/peer/drift/reject counters. `/health` + `/match/rooms` list live rooms; README covers Ubuntu VPS + Caddy/Coolify.
+- **Areas:** `server/src/index.ts`, `server/src/rooms/SystemRoom.ts`, `src/net/remoteAdapter.ts`, `src/net/adapterTypes.ts`, `src/systems/debugOverlay.ts`, `src/main.ts`, `server/README.md`, `docker-compose.yml`
+- **Notes:** One Node process hosts many system rooms; Redis multi-host clustering still later.
+
+---
+- **Summary:** Wired Hold-E mining (`mine.hit` → loot + deplete + hit pulse), net-authoritative inventory move/equip/unequip/split with UUID-preserving sync, remote players load character GLTFs (capped, capsule fallback for far/impostors), ESC social rail Invite/Leave group plus in-system peers listed for invites.
+- **Areas:** `src/systems/oreMining.ts`, `src/systems/remotePlayers.ts`, `src/main.ts`, `src/ui/settingsMenu.ts`, `src/sim/inventoryOps.ts`, `src/net/localAdapter.ts`, `src/net/interpolation.ts`, `server/src/services/*`
+- **Notes:** Still out of scope: TLS/`wss`, full OAuth, LiveKit voice. Mining grants ore into bag (no world drop shell for deplete loot).
+
+---
+- **Summary:** Not “ship production MMO” yet, but co-presence is now fail-safe: offline fallback if server/auth down; welcome identity sync; launch/land no longer rejected as teleports; remotes convert CoordFrame → system space before render; event request queue; memory-store Docker default (no Postgres required); server README + `.env.example`.
+- **Areas:** `src/sim/validate.ts`, `src/net/*`, `src/systems/remotePlayers.ts`, `src/main.ts`, `server/*`, `docker-compose.yml`
+- **Notes:** Still missing durable inventory migrations, mining UI, full GLTF remotes, and TLS — see `server/README.md`.
+
+---
+
+### 2026-07-11 — Multiplayer review cleanup
+- **Summary:** Removed accidental `tsc` emit `.js` twins under `src/sim` and `src/net` (TypeScript sources already exist). Fixed Docker build context, guest auth identity sync before Colyseus join, Admin-only V-fly gating, remote visibility, drop event → world drop wiring, trade-offer parse bug.
+- **Areas:** `src/sim/*.js` (deleted), `src/net/*.js` (deleted), `.gitignore`, `server/Dockerfile`, `src/main.ts`, `src/net/createNetAdapter.ts`, `src/systems/possession.ts`, `src/systems/remotePlayers.ts`, `src/systems/worldDrops.ts`, `src/sim/expansionHooks.ts`
+- **Notes:** Client `tsconfig` has `noEmit: true`; stray `.js` files were likely from a one-off emit or IDE compile into source dirs.
+
+---
+
+### 2026-07-11 — Multiplayer architecture (phases 0–5)
+- **Summary:** NetAdapter seam (local loopback + Colyseus remote), CoordFrame-tagged protocol, client-owned transforms with dead-reckoning remotes, interest tiers, server-authoritative economy (inventory/drops/mining), guest auth + friends/groups/chat, trade/combat/market expansion hooks, Docker Compose server.
+- **Areas:** `src/sim/`, `src/net/`, `src/systems/remotePlayers.ts`, `src/ui/chatPanel.ts`, `src/ui/groupCompass.ts`, `src/main.ts`, `src/ecs/components.ts`, `server/`, `docker-compose.yml`, `package.json`
+- **Notes:** Single-player runs through `LocalNetAdapter` unchanged. Multiplayer: `?mp=1&server=ws://localhost:2567`. Shift+Enter toggles chat. Admin V-fly gated by session role.
+
+---
 - **Summary:** Reserved `h-12` for the XP footer so the level circle sits fully on top of the thin bar (not clipped under the viewport).
 - **Areas:** `src/ui/settingsMenu.ts`
 

@@ -13,9 +13,15 @@ export interface AppearanceCallbacks {
   onCharacterChange: (characterId: string) => void | Promise<void>;
 }
 
+import type { FriendEntry } from "../net/adapterTypes";
+
 export interface GameMenuOptions {
   appearance?: AppearanceCallbacks;
   systemMap?: SystemMap;
+  getFriends?: () => FriendEntry[];
+  onAddFriend?: (displayName: string) => void;
+  onInviteGroup?: (playerId: string) => void;
+  onLeaveGroup?: () => void;
 }
 
 export interface SettingsMenu {
@@ -23,6 +29,7 @@ export interface SettingsMenu {
   close(): void;
   setTab(tab: MenuTab): void;
   bindSystemMap(map: SystemMap): void;
+  refreshFriends(): void;
   readonly isOpen: boolean;
   readonly tab: MenuTab;
   dispose(): void;
@@ -35,7 +42,7 @@ const TABS: { id: MenuTab; label: string }[] = [
   { id: "settings", label: "Settings" },
 ];
 
-const FRIENDS = [
+const FRIENDS_FALLBACK = [
   { id: "f1", name: "Nova", color: "#7fd6ff" },
   { id: "f2", name: "Kai", color: "#6fbf73" },
   { id: "f3", name: "Rex", color: "#e8623a" },
@@ -135,30 +142,73 @@ export function createSettingsMenu(
     tabButtons.set(tab.id, btn);
   }
 
-  for (const friend of FRIENDS) {
-    const row = document.createElement("div");
-    row.className =
-      "flex w-16 shrink-0 items-center justify-center overflow-hidden group-hover/social:w-auto group-hover/social:justify-start group-hover/social:gap-3 group-hover/social:rounded-xl group-hover/social:px-2 group-hover/social:py-1.5";
-    row.innerHTML =
-      `<span class="relative flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-[#0c1018]" style="background:${friend.color}">` +
-      `${friend.name.slice(0, 1)}` +
-      `<span class="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[#0b0f18] bg-[#6fbf73]"></span>` +
-      `</span>` +
-      `<span class="hidden min-w-0 group-hover/social:block">` +
-      `<span class="block truncate text-sm font-medium">${friend.name}</span>` +
-      `<span class="block truncate text-[11px] text-[#f4f1e8]/45">Online</span>` +
-      `</span>`;
-    friendsEl.appendChild(row);
-  }
+  const renderFriends = () => {
+    friendsEl.innerHTML = "";
+    const list = options.getFriends?.() ?? FRIENDS_FALLBACK.map((f) => ({
+      playerId: f.id,
+      displayName: f.name,
+      online: true,
+      presence: "Online",
+      color: f.color,
+    }));
+    for (const friend of list) {
+      const row = document.createElement("div");
+      row.className =
+        "flex w-16 shrink-0 flex-col items-center overflow-hidden group-hover/social:w-auto group-hover/social:items-stretch group-hover/social:gap-1 group-hover/social:rounded-xl group-hover/social:px-2 group-hover/social:py-1.5";
+      const head = document.createElement("div");
+      head.className = "flex items-center justify-center group-hover/social:justify-start group-hover/social:gap-3";
+      head.innerHTML =
+        `<span class="relative flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-[#0c1018]" style="background:${friend.color}">` +
+        `${friend.displayName.slice(0, 1)}` +
+        `<span class="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[#0b0f18] ${friend.online ? "bg-[#6fbf73]" : "bg-[#f4f1e8]/25"}"></span>` +
+        `</span>` +
+        `<span class="hidden min-w-0 group-hover/social:block">` +
+        `<span class="block truncate text-sm font-medium">${friend.displayName}</span>` +
+        `<span class="block truncate text-[11px] text-[#f4f1e8]/45">${friend.presence}</span>` +
+        `</span>`;
+      row.appendChild(head);
+      if (friend.online && options.onInviteGroup) {
+        const invite = document.createElement("button");
+        invite.type = "button";
+        invite.className =
+          "hidden rounded-md border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-[#f4f1e8]/70 transition hover:border-[#e8623a]/50 hover:text-[#f4f1e8] group-hover/social:block";
+        invite.textContent = "Invite";
+        invite.addEventListener("click", (e) => {
+          e.stopPropagation();
+          options.onInviteGroup?.(friend.playerId);
+        });
+        row.appendChild(invite);
+      }
+      friendsEl.appendChild(row);
+    }
 
-  const addFriend = document.createElement("button");
-  addFriend.type = "button";
-  addFriend.className =
-    "flex w-16 shrink-0 items-center justify-center overflow-hidden text-[#f4f1e8]/70 transition hover:text-[#f4f1e8] group-hover/social:w-auto group-hover/social:justify-start group-hover/social:gap-3 group-hover/social:rounded-xl group-hover/social:border group-hover/social:border-dashed group-hover/social:border-white/15 group-hover/social:px-2 group-hover/social:py-1.5 group-hover/social:hover:border-[#e8623a]/45 group-hover/social:hover:bg-[#e8623a]/10";
-  addFriend.innerHTML =
-    `<span class="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed border-white/20 bg-white/[0.03] text-lg leading-none">+</span>` +
-    `<span class="hidden min-w-0 text-sm group-hover/social:block">Add friend</span>`;
-  friendsEl.appendChild(addFriend);
+    const addFriend = document.createElement("button");
+    addFriend.type = "button";
+    addFriend.className =
+      "flex w-16 shrink-0 items-center justify-center overflow-hidden text-[#f4f1e8]/70 transition hover:text-[#f4f1e8] group-hover/social:w-auto group-hover/social:justify-start group-hover/social:gap-3 group-hover/social:rounded-xl group-hover/social:border group-hover/social:border-dashed group-hover/social:border-white/15 group-hover/social:px-2 group-hover/social:py-1.5 group-hover/social:hover:border-[#e8623a]/45 group-hover/social:hover:bg-[#e8623a]/10";
+    addFriend.innerHTML =
+      `<span class="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed border-white/20 bg-white/[0.03] text-lg leading-none">+</span>` +
+      `<span class="hidden min-w-0 text-sm group-hover/social:block">Add friend</span>`;
+    addFriend.addEventListener("click", () => {
+      const name = window.prompt("Friend display name");
+      if (name?.trim()) options.onAddFriend?.(name.trim());
+    });
+    friendsEl.appendChild(addFriend);
+
+    if (options.onLeaveGroup) {
+      const leave = document.createElement("button");
+      leave.type = "button";
+      leave.className =
+        "flex w-16 shrink-0 items-center justify-center overflow-hidden text-[#f4f1e8]/55 transition hover:text-[#e8623a] group-hover/social:w-auto group-hover/social:justify-start group-hover/social:gap-3 group-hover/social:rounded-xl group-hover/social:px-2 group-hover/social:py-1.5";
+      leave.innerHTML =
+        `<span class="flex size-9 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/[0.03] text-xs">×</span>` +
+        `<span class="hidden min-w-0 text-sm group-hover/social:block">Leave group</span>`;
+      leave.addEventListener("click", () => options.onLeaveGroup?.());
+      friendsEl.appendChild(leave);
+    }
+  };
+
+  renderFriends();
 
   const buildCharacterPane = () => {
     characterPane.innerHTML =
@@ -488,6 +538,7 @@ export function createSettingsMenu(
       systemMapRef = map;
       if (isOpen && activeTab === "map") syncMapEmbed();
     },
+    refreshFriends: renderFriends,
     get isOpen() { return isOpen; },
     get tab() { return activeTab; },
     dispose: () => {

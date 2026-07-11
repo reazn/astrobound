@@ -8,6 +8,7 @@ export const BAG_SIZE = BAG_COLS * BAG_ROWS;
 export interface ItemStack {
   itemId: string;
   qty: number;
+  uuid?: string;
 }
 
 export type Equipment = Record<EquipSlot, ItemStack | null>;
@@ -170,7 +171,11 @@ export function splitStack(inv: PlayerInventory, from: InvLoc, amount: number): 
   const empty = findEmptyBagSlot(inv);
   if (empty < 0) return false;
   stack.qty -= move;
-  inv.bag[empty] = { itemId: stack.itemId, qty: move };
+  inv.bag[empty] = {
+    itemId: stack.itemId,
+    qty: move,
+    uuid: stack.uuid ? `${stack.uuid}-s${Date.now().toString(36)}` : undefined,
+  };
   return true;
 }
 

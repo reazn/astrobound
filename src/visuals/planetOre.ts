@@ -6,6 +6,7 @@ import type { RngStream } from "../engine/rng";
 import { rngRange, rngInt } from "../engine/rng";
 import type { Planet } from "../worldgen/planet";
 import { lodSegments } from "../worldgen/planetMesh";
+import { oreNodeId } from "../sim/mining";
 
 const COUNT_BASE = 90;
 const SCALE_MIN = 0.45;
@@ -18,6 +19,7 @@ export interface PlanetOre {
   centers: Vector3[];
   radii: number[];
   kinds: OreKind[];
+  nodeIds: string[];
 }
 
 function pickKind(rng: RngStream, climate?: string): OreKind {
@@ -272,6 +274,7 @@ export function createPlanetOre(
   const centers: Vector3[] = [];
   const radii: number[] = [];
   const kinds: OreKind[] = [];
+  const nodeIds: string[] = [];
 
   const climate = planet.def.meta?.climate;
   const count = climate === "gas_giant"
@@ -328,8 +331,9 @@ export function createPlanetOre(
     centers.push(pos.clone());
     radii.push(size * (kind === "crystal" ? 0.85 : 0.7));
     kinds.push(kind);
+    nodeIds.push(oreNodeId(planet.def.id, placed));
     placed++;
   }
 
-  return { group, centers, radii, kinds };
+  return { group, centers, radii, kinds, nodeIds };
 }
