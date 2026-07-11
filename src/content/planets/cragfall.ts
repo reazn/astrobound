@@ -24,7 +24,7 @@ export const CRAGFALL: PlanetDef = {
   cloudCoverage: 0.52,
   liquid: {
     kind: "water",
-    level: -6,
+    level: -10,
     color: "#1e6f92",
     opacity: 0.82,
   },

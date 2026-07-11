@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 
-// Rapier ships as WASM; Vite needs to treat it as an asset-friendly dep.
 export default defineConfig({
+  plugins: [tailwindcss()],
   server: { port: 5173 },
   optimizeDeps: {
     exclude: ["@dimforge/rapier3d-compat"],

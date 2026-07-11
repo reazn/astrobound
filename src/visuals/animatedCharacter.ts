@@ -42,6 +42,7 @@ export interface AnimatedCharacter {
   object: Group;
   height: number;
   setLocomotion(speed01: number, grounded: boolean, swimming?: boolean): void;
+  setBindPose(hold: boolean): void;
   play(action: ActionName, timeScale?: number): void;
   isBusy(): boolean;
   attachToBone(obj: Object3D, boneName: string): boolean;
@@ -88,8 +89,8 @@ export function createAnimatedCharacter(
   root.traverse((o: Object3D) => {
     const m = o as Mesh;
     if (m.isMesh) {
-      m.castShadow = false;
-      m.receiveShadow = false;
+      m.castShadow = true;
+      m.receiveShadow = true;
       m.frustumCulled = false;
       if (Array.isArray(m.material)) {
         m.material = m.material.map((x) => makeReadableToon(x));
@@ -155,6 +156,7 @@ export function createAnimatedCharacter(
 
   // Sticky loco band so speed01 noise around thresholds doesn't thrash idle↔walk.
   let locoBand: "idle" | "walk" | "run" | "swimIdle" | "swim" | "air" = "idle";
+  let bindPoseHold = false;
 
   const jumpActions = [jumpStart, jumpAir, jumpLand].filter(Boolean) as AnimationAction[];
 
@@ -328,6 +330,7 @@ export function createAnimatedCharacter(
     object: root,
     height,
     setLocomotion(speed01, grounded, swimming = false) {
+      if (bindPoseHold) return;
       const wasGrounded = locoGrounded;
       locoSpeed01 = speed01;
       locoGrounded = grounded;
@@ -349,7 +352,27 @@ export function createAnimatedCharacter(
       if (run && !swimming) run.timeScale = 0.9 + speed01 * 0.5;
       if (swimMove && swimming) swimMove.timeScale = 0.85 + speed01 * 0.55;
     },
+    setBindPose(hold) {
+      if (hold === bindPoseHold) return;
+      bindPoseHold = hold;
+      if (!hold) return;
+      mixer.stopAllAction();
+      busy = null;
+      busyIsDeath = false;
+      jumpPhase = "none";
+      jumpWatchdog = 0;
+      jumping = false;
+      current = null;
+      anim.position.set(0, 0, 0);
+      anim.rotation.set(0, 0, 0);
+      anim.scale.set(1, 1, 1);
+      root.traverse((o) => {
+        const sm = o as SkinnedMesh;
+        if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose();
+      });
+    },
     play(name, timeScale = 1) {
+      if (bindPoseHold) return;
       if (name === "jump") {
         beginJump(timeScale);
         return;
@@ -390,6 +413,16 @@ export function createAnimatedCharacter(
       }
     },
     update(dt) {
+      if (bindPoseHold) {
+        anim.position.set(0, 0, 0);
+        anim.rotation.set(0, 0, 0);
+        anim.scale.set(1, 1, 1);
+        root.traverse((o) => {
+          const sm = o as SkinnedMesh;
+          if (sm.isSkinnedMesh) sm.frustumCulled = false;
+        });
+        return;
+      }
       mixer.update(dt);
 
       if (jumpWatchdog > 0) {

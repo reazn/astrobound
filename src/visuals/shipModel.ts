@@ -30,8 +30,8 @@ export async function loadShipModel(shipIdOrDef?: string | ShipDef): Promise<Shi
   model.traverse((o: Object3D) => {
     const m = o as Mesh;
     if (m.isMesh) {
-      m.castShadow = false;
-      m.receiveShadow = false;
+      m.castShadow = true;
+      m.receiveShadow = true;
       m.renderOrder = 10;
       if (Array.isArray(m.material)) {
         m.material = m.material.map((x) => makeReadableToon(x));

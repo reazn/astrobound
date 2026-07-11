@@ -1,36 +1,16 @@
-import { BufferGeometry, BufferAttribute } from "three";
+import { BufferGeometry, BufferAttribute, Group, Mesh, type Material } from "three";
 import type { Planet } from "./planet";
 import { buildMeshBuffers } from "./meshBuffers";
 import type { LodWorkerRequest, LodWorkerResponse } from "./lodWorker";
 
 export interface PlanetMesh {
-  geometry: BufferGeometry;
+  group: Group;
+  faces: Mesh[];
+  geometries: BufferGeometry[];
+  segments: number;
   colliderVertices: Float32Array;
   colliderIndices: Uint32Array;
-}
-
-export function buildPlanetMesh(planet: Planet, segments?: number): PlanetMesh {
-  const S = Math.max(8, segments ?? planet.def.faceSegments);
-  const buffers = buildMeshBuffers(
-    (nx, ny, nz) => planet.surfaceRadius(nx, ny, nz),
-    planet.minR,
-    planet.maxR,
-    planet.def.palette,
-    planet.def.noise.mottleFreq,
-    S,
-    true,
-    planet.seaLevel,
-  );
-  const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new BufferAttribute(buffers.positions, 3));
-  geometry.setAttribute("normal", new BufferAttribute(buffers.normals, 3));
-  geometry.setAttribute("color", new BufferAttribute(buffers.colors, 3));
-  geometry.computeBoundingSphere();
-  return {
-    geometry,
-    colliderVertices: buffers.colliderVertices,
-    colliderIndices: buffers.colliderIndices,
-  };
+  disposeGeometries(): void;
 }
 
 export function geometryFromBuffers(
@@ -46,8 +26,78 @@ export function geometryFromBuffers(
   return geometry;
 }
 
+export function splitCubeFaceGeometries(
+  positions: Float32Array,
+  normals: Float32Array,
+  colors: Float32Array,
+  segments: number,
+): BufferGeometry[] {
+  const S = Math.max(8, segments);
+  const floatsPerFace = S * S * 2 * 9;
+  const geos: BufferGeometry[] = [];
+  for (let f = 0; f < 6; f++) {
+    const a = f * floatsPerFace;
+    const b = a + floatsPerFace;
+    if (b > positions.length) break;
+    const geo = geometryFromBuffers(
+      positions.slice(a, b),
+      normals.slice(a, b),
+      colors.slice(a, b),
+    );
+    geo.userData.faceIndex = f;
+    geos.push(geo);
+  }
+  return geos;
+}
+
+export function createFaceGroup(
+  geometries: BufferGeometry[],
+  material: Material,
+): { group: Group; faces: Mesh[] } {
+  const group = new Group();
+  const faces: Mesh[] = [];
+  for (let i = 0; i < geometries.length; i++) {
+    const mesh = new Mesh(geometries[i], material);
+    mesh.userData.faceIndex = i;
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.frustumCulled = true;
+    group.add(mesh);
+    faces.push(mesh);
+  }
+  return { group, faces };
+}
+
+export function buildPlanetMesh(planet: Planet, segments: number, material: Material): PlanetMesh {
+  const S = Math.max(8, segments);
+  const buffers = buildMeshBuffers(
+    (nx, ny, nz) => planet.surfaceRadius(nx, ny, nz),
+    planet.minR,
+    planet.maxR,
+    planet.def.palette,
+    planet.def.noise.mottleFreq,
+    S,
+    true,
+    planet.seaLevel,
+  );
+  const geometries = splitCubeFaceGeometries(
+    buffers.positions, buffers.normals, buffers.colors, S,
+  );
+  const { group, faces } = createFaceGroup(geometries, material);
+  return {
+    group,
+    faces,
+    geometries,
+    segments: S,
+    colliderVertices: buffers.colliderVertices,
+    colliderIndices: buffers.colliderIndices,
+    disposeGeometries() {
+      for (const g of geometries) g.dispose();
+    },
+  };
+}
+
 export function lodSegments(base: number): { high: number; mid: number; low: number } {
-  // √2 on segments ≈ 2× triangle count (poly ∝ S²); liquid uses high.
   const high = Math.max(48, Math.round(base * 1.15 * Math.SQRT2));
   return {
     high,
@@ -85,7 +135,7 @@ export function buildPlanetMeshAsync(
   seed: string,
   segments: number,
   seaLevel: number,
-): Promise<BufferGeometry> {
+): Promise<BufferGeometry[]> {
   const jobId = nextJobId++;
   const req: LodWorkerRequest = {
     jobId,
@@ -98,7 +148,7 @@ export function buildPlanetMeshAsync(
           reject(new Error(res.error));
           return;
         }
-        resolve(geometryFromBuffers(res.positions, res.normals, res.colors));
+        resolve(splitCubeFaceGeometries(res.positions, res.normals, res.colors, segments));
       },
       reject,
     });

@@ -3,6 +3,7 @@ import { MOVEMENT } from "../config/movement";
 import type { GameWorld } from "../ecs/world";
 import type { Planet } from "../worldgen/planet";
 import type { Input } from "../engine/input";
+import { hasEquippedMount, type PlayerInventory } from "../inventory/playerInventory";
 
 // Player locomotion on a sphere. "Up" is the local surface normal; gravity is
 // radial (toward the planet center) and jumps push outward. WASD moves in the
@@ -100,6 +101,8 @@ export function updatePlayerMovement(
   dt: number,
   rocks?: RockColliders,
   ore?: RockColliders,
+  inventory?: PlayerInventory,
+  canDebugFly = true,
 ) {
   for (const e of world.with("player", "movement", "position", "stats")) {
     const m = e.movement;
@@ -109,11 +112,23 @@ export function updatePlayerMovement(
     m.didSlide = false;
     m.inLiquid = false;
 
-    if (input.justPressed("KeyV")) {
+    if (canDebugFly && input.justPressed("KeyV")) {
       m.flying = !m.flying;
       if (m.flying) {
         m.sliding = false;
+        m.hoverboarding = false;
         m.grounded = false;
+      }
+    }
+
+    const canHover = !inventory || hasEquippedMount(inventory, "hoverboard");
+    if (m.hoverboarding && !canHover) m.hoverboarding = false;
+
+    if (input.justPressed("KeyH") && !m.flying && canHover) {
+      m.hoverboarding = !m.hoverboarding;
+      if (m.hoverboarding) {
+        m.sliding = false;
+        m.slideTime = 0;
       }
     }
 
@@ -131,7 +146,9 @@ export function updatePlayerMovement(
 
     const f = (input.held("KeyW") ? 1 : 0) - (input.held("KeyS") ? 1 : 0);
     const s = (input.held("KeyD") ? 1 : 0) - (input.held("KeyA") ? 1 : 0);
-    wish.set(0, 0, 0).addScaledVector(fwd, f).addScaledVector(right, s);
+    // Airborne hoverboard: W/S move only; A/D reserved for rolls.
+    const moveS = (m.hoverboarding && !m.grounded) ? 0 : s;
+    wish.set(0, 0, 0).addScaledVector(fwd, f).addScaledVector(right, moveS);
     const wishLen = wish.length();
     if (wishLen > 0) wish.multiplyScalar(1 / wishLen);
 
@@ -161,11 +178,26 @@ export function updatePlayerMovement(
       const hs = velTan.length();
       m.speed01 = Math.min(1.5, hs / (MOVEMENT.moveSpeed * MOVEMENT.flySpeedMult));
       if (hs > 1.0) m.faceDir.copy(velTan).multiplyScalar(1 / hs);
+      else m.faceDir.copy(fwd);
       continue;
     }
 
-    const speed = MOVEMENT.moveSpeed * stats.moveSpeedMult;
-    const curGroundR = planet.surfaceRadius(up.x, up.y, up.z);
+    const groundProbe = planet.surfaceRadius(up.x, up.y, up.z);
+    const overLiquid = !!(planet.def.liquid
+      && pos.length() < planet.seaLevel + 2.5
+      && groundProbe < planet.seaLevel - 0.25);
+    const hover = m.hoverboarding;
+    const inLiquid = overLiquid && !hover;
+    m.inLiquid = inLiquid;
+
+    const boosting = hover && (input.held("ShiftLeft") || input.held("ShiftRight"));
+    const speed = hover
+      ? MOVEMENT.hoverboardSpeed * stats.moveSpeedMult
+        * (boosting ? MOVEMENT.hoverboardBoostMult : 1)
+      : MOVEMENT.moveSpeed * stats.moveSpeedMult;
+    const curGroundR = overLiquid && hover
+      ? Math.max(groundProbe, planet.seaLevel)
+      : planet.surfaceRadius(up.x, up.y, up.z);
 
     // Probe climb grade along wish so steep hills slow / block before integrate.
     let climbMul = 1;
@@ -173,15 +205,23 @@ export function updatePlayerMovement(
       const probe = Math.max(0.45, Math.min(1.4, speed * dt * 4));
       tentative.copy(pos).addScaledVector(wish, probe);
       tUp.copy(tentative).normalize();
-      const probeClimb = planet.surfaceRadius(tUp.x, tUp.y, tUp.z) - curGroundR;
+      const probeSurf = overLiquid && hover
+        ? Math.max(planet.surfaceRadius(tUp.x, tUp.y, tUp.z), planet.seaLevel)
+        : planet.surfaceRadius(tUp.x, tUp.y, tUp.z);
+      const probeClimb = probeSurf - curGroundR;
       climbMul = slopeFactor(probeClimb, probe);
+      if (hover) {
+        climbMul = Math.max(climbMul, MOVEMENT.hoverboardSlopeEase);
+      }
     }
 
-    // Slide.
+    // Slide (disabled while hoverboarding — board is always "sliding").
     m.slideCooldown = Math.max(0, m.slideCooldown - dt);
     const wantsSlide =
-      input.justPressed("ShiftLeft") || input.justPressed("ShiftRight") ||
-      input.justPressed("ControlLeft") || input.justPressed("ControlRight");
+      !hover && (
+        input.justPressed("ShiftLeft") || input.justPressed("ShiftRight") ||
+        input.justPressed("ControlLeft") || input.justPressed("ControlRight")
+      );
     if (
       !m.sliding && wantsSlide && m.grounded &&
       velTan.length() > 1.0 && m.slideCooldown === 0
@@ -192,31 +232,80 @@ export function updatePlayerMovement(
       m.didSlide = true;
     }
 
-    if (m.sliding) {
-      m.slideTime -= dt;
-      target.copy(wish).multiplyScalar(speed * Math.max(0.35, climbMul));
-      moveTowards(velTan, target, 18 * dt);
-      if (m.slideTime <= 0) {
-        m.sliding = false;
-        m.slideCooldown = MOVEMENT.slideCooldown;
-      }
-    } else if (wishLen > 0) {
+    if (hover) {
       const accel = m.grounded
-        ? MOVEMENT.groundAccel * (0.35 + 0.65 * climbMul)
-        : MOVEMENT.groundAccel * MOVEMENT.airControl;
-      target.copy(wish).multiplyScalar(speed * climbMul);
-      moveTowards(velTan, target, accel * dt);
-    } else if (m.grounded) {
-      velTan.multiplyScalar(Math.max(0, 1 - MOVEMENT.groundFriction * dt));
+        ? MOVEMENT.hoverboardAccel * (0.4 + 0.6 * climbMul) * (boosting ? 1.25 : 1)
+        : MOVEMENT.hoverboardAccel * MOVEMENT.hoverboardAirControl;
+      if (wishLen > 0) {
+        target.copy(wish).multiplyScalar(speed * climbMul);
+        // High-speed turn bleed — Fortnite carve feel.
+        const hs0 = velTan.length();
+        const turnBlend = hs0 > 8 ? Math.min(1, 10 / hs0) : 1;
+        moveTowards(velTan, target, accel * (0.55 + 0.45 * turnBlend) * dt);
+      } else if (m.grounded) {
+        velTan.multiplyScalar(Math.max(0, 1 - MOVEMENT.hoverboardFriction * dt));
+      } else {
+        velTan.multiplyScalar(Math.max(0, 1 - MOVEMENT.hoverboardFriction * 0.25 * dt));
+      }
+
+      // Slope gravity: downhill carves add speed.
+      if (m.grounded && velTan.lengthSq() > 0.25) {
+        const eps = 0.85;
+        gDirA.copy(velTan).normalize();
+        const rA = overLiquid && hover
+          ? Math.max(groundRAt(planet, pos, gDirA, eps), planet.seaLevel)
+          : groundRAt(planet, pos, gDirA, eps);
+        const rB = overLiquid && hover
+          ? Math.max(groundRAt(planet, pos, gDirA, -eps), planet.seaLevel)
+          : groundRAt(planet, pos, gDirA, -eps);
+        const grade = (rA - rB) / (2 * eps);
+        velTan.addScaledVector(gDirA, -grade * MOVEMENT.hoverboardSlopeAccel * dt);
+        const maxSp = speed * 1.45;
+        if (velTan.length() > maxSp) velTan.setLength(maxSp);
+      }
+
+      // Air rolls: A/D only. W/S stay movement.
+      if (!m.grounded) {
+        m.hoverPitchVel = 0;
+        m.hoverPitch *= Math.max(0, 1 - MOVEMENT.flipLandDamp * dt);
+        if (Math.abs(m.hoverPitch) < 0.02) m.hoverPitch = 0;
+        m.hoverRollVel = s * MOVEMENT.flipSpeed;
+        m.hoverRoll += m.hoverRollVel * dt;
+      } else {
+        m.hoverPitchVel = 0;
+        m.hoverRollVel = 0;
+        m.hoverPitch *= Math.max(0, 1 - MOVEMENT.flipLandDamp * dt);
+        m.hoverRoll *= Math.max(0, 1 - MOVEMENT.flipLandDamp * dt);
+        if (Math.abs(m.hoverPitch) < 0.02) m.hoverPitch = 0;
+        if (Math.abs(m.hoverRoll) < 0.02) m.hoverRoll = 0;
+      }
+    } else {
+      m.hoverPitch = 0;
+      m.hoverRoll = 0;
+      m.hoverPitchVel = 0;
+      m.hoverRollVel = 0;
+      if (m.sliding) {
+        m.slideTime -= dt;
+        target.copy(wish).multiplyScalar(speed * Math.max(0.35, climbMul));
+        moveTowards(velTan, target, 18 * dt);
+        if (m.slideTime <= 0) {
+          m.sliding = false;
+          m.slideCooldown = MOVEMENT.slideCooldown;
+        }
+      } else if (wishLen > 0) {
+        const accel = m.grounded
+          ? MOVEMENT.groundAccel * (0.35 + 0.65 * climbMul)
+          : MOVEMENT.groundAccel * MOVEMENT.airControl;
+        target.copy(wish).multiplyScalar(speed * climbMul);
+        moveTowards(velTan, target, accel * dt);
+      } else if (m.grounded) {
+        velTan.multiplyScalar(Math.max(0, 1 - MOVEMENT.groundFriction * dt));
+      }
     }
 
     // Gravity (radial). MOVEMENT.gravity is negative => pulls inward.
     // In liquid: buoyancy + drag so you float toward the surface.
-    const groundProbe = planet.surfaceRadius(up.x, up.y, up.z);
-    const inLiquid = !!(planet.def.liquid
-      && pos.length() < planet.seaLevel + 1.2
-      && groundProbe < planet.seaLevel - 0.5);
-    m.inLiquid = inLiquid;
+    // Hoverboard skates on the surface — skip swim drag.
     if (inLiquid) {
       const submerged = Math.max(0, planet.seaLevel - pos.length());
       const buoyancy = planet.def.liquid!.kind === "lava" ? 22 : 28;
@@ -225,15 +314,17 @@ export function updatePlayerMovement(
       velTan.multiplyScalar(Math.max(0, 1 - 3.5 * dt));
       if (radial > 8) radial = 8;
     } else {
-      radial = Math.max(MOVEMENT.maxFallSpeed, radial + MOVEMENT.gravity * dt);
+      const g = hover && !m.grounded ? MOVEMENT.gravity * 0.92 : MOVEMENT.gravity;
+      radial = Math.max(MOVEMENT.maxFallSpeed, radial + g * dt);
     }
-    if (m.grounded && radial < 0 && !inLiquid) radial = -2;
+    if (m.grounded && radial < 0 && !inLiquid) radial = hover ? -0.6 : -2;
 
     // Jump timers + jump.
     m.coyote = m.grounded ? MOVEMENT.coyoteTime : m.coyote - dt;
     m.buffer = input.justPressed("Space") ? MOVEMENT.jumpBuffer : m.buffer - dt;
     if (m.grounded) m.jumpsLeft = stats.extraJumps;
-    const jumpV = MOVEMENT.jumpSpeed * Math.sqrt(stats.jumpHeightMult);
+    const jumpV = MOVEMENT.jumpSpeed * Math.sqrt(stats.jumpHeightMult)
+      * (hover ? MOVEMENT.hoverboardJumpMult : 1);
     if (m.buffer > 0) {
       if (m.coyote > 0) {
         radial = jumpV;
@@ -257,10 +348,13 @@ export function updatePlayerMovement(
     if (horiz > 1e-5) {
       tentative.copy(pos).addScaledVector(velTan, dt);
       tUp.copy(tentative).normalize();
-      const climb = planet.surfaceRadius(tUp.x, tUp.y, tUp.z) - curGroundR;
+      const nextSurf = overLiquid && hover
+        ? Math.max(planet.surfaceRadius(tUp.x, tUp.y, tUp.z), planet.seaLevel)
+        : planet.surfaceRadius(tUp.x, tUp.y, tUp.z);
+      const climb = nextSurf - curGroundR;
       const maxClimb = MAX_STEP + HARD_SLOPE * horiz;
-      const canStep = !m.grounded || climb <= maxClimb;
-      const gradeOk = !m.grounded || slopeFactor(climb, horiz) > 0.02;
+      const canStep = !m.grounded || climb <= maxClimb || hover;
+      const gradeOk = !m.grounded || hover || slopeFactor(climb, horiz) > 0.02;
       if (canStep && gradeOk) {
         pos.copy(tentative);
       } else {
@@ -307,20 +401,30 @@ export function updatePlayerMovement(
     // threshold and, when snapping, remove the WHOLE radial component so no
     // chord drift accumulates (which would micro-bounce and bleed speed).
     up.copy(pos).normalize();
-    const groundR = planet.surfaceRadius(up.x, up.y, up.z);
+    const terrainR = planet.surfaceRadius(up.x, up.y, up.z);
+    const onWater = !!(hover && planet.def.liquid && terrainR < planet.seaLevel - 0.2);
+    const surfaceR = onWater ? planet.seaLevel : terrainR;
+    const hoverLift = hover
+      ? (onWater ? MOVEMENT.hoverboardWaterClearance : MOVEMENT.hoverboardHeight)
+      : 0;
     const r = pos.length();
     const radialNow = m.velocity.dot(up);
-    const band = m.grounded ? SNAP : SKIN;
+    const band = (m.grounded ? SNAP : SKIN) + hoverLift;
     const jumping = radialNow > 3.0;
     // Don't snap through liquid — float at the surface instead of burying.
+    // Hoverboard rides clearly on top of water (never swimming depth).
     if (inLiquid && r < planet.seaLevel) {
       if (r > planet.seaLevel - 0.35 && radialNow < 2) {
         pos.copy(up).multiplyScalar(planet.seaLevel);
         m.velocity.addScaledVector(up, -Math.min(0, radialNow));
       }
       m.grounded = false;
-    } else if (r <= groundR + band && !jumping) {
-      pos.copy(up).multiplyScalar(groundR);
+    } else if (onWater && r < surfaceR + hoverLift && radialNow <= 3.0) {
+      pos.copy(up).multiplyScalar(surfaceR + hoverLift);
+      if (radialNow < 0) m.velocity.addScaledVector(up, -radialNow);
+      m.grounded = true;
+    } else if (r <= surfaceR + band && !jumping) {
+      pos.copy(up).multiplyScalar(surfaceR + hoverLift);
       m.velocity.addScaledVector(up, -radialNow);
       m.grounded = true;
     } else {
@@ -334,7 +438,9 @@ export function updatePlayerMovement(
     m.up.copy(up);
     velTan.copy(m.velocity).addScaledVector(up, -m.velocity.dot(up));
     const hs = velTan.length();
-    m.speed01 = Math.min(1.5, hs / MOVEMENT.moveSpeed);
+    const speedRef = hover ? MOVEMENT.hoverboardSpeed : MOVEMENT.moveSpeed;
+    m.speed01 = Math.min(1.5, hs / speedRef);
     if (hs > 1.0) m.faceDir.copy(velTan).multiplyScalar(1 / hs);
+    else m.faceDir.copy(fwd);
   }
 }

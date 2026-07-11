@@ -23,6 +23,11 @@ export interface MovementState {
   didSlide: boolean;
   flying: boolean;
   inLiquid: boolean;
+  hoverboarding: boolean;
+  hoverPitch: number;
+  hoverRoll: number;
+  hoverPitchVel: number;
+  hoverRollVel: number;
 }
 
 export interface DerivedStats {
@@ -63,7 +68,13 @@ export interface ShipComp {
 
 export interface Entity {
   player?: true;
+  remote?: true;
   ship?: ShipComp;
+
+  networkId?: string;
+  playerId?: string;
+  isLocal?: boolean;
+  displayName?: string;
 
   // Transform. Meaning depends on mode (see ShipComp doc above); for the
   // on-foot player it is always planet-relative to the current planet.

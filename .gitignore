@@ -13,3 +13,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+src/sim/*.js
+src/net/*.js
+server/dist/

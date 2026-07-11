@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&family=Share+Tech+Mono&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Exo 2", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", ui-monospace, monospace;
+  --color-ab-bg: #050810;
+  --color-ab-panel: #141822;
+  --color-ab-text: #f4f1e8;
+  --color-ab-muted: #9aa3b2;
+  --color-ab-accent: #e8623a;
+  --color-ab-cyan: #7fd6ff;
+  --color-ab-amber: #ffb85a;
+  --color-ab-warp: #c4a8ff;
+  --color-ab-border: rgb(255 255 255 / 0.08);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--color-ab-bg);
+    color: var(--color-ab-text);
+    font-family: var(--font-sans);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  canvas {
+    display: block;
+  }
+}

@@ -47,10 +47,14 @@ export function beginLanding(ship: Entity, planet: PlanetInstance, normal: Vecto
   tmp.copy(ship.position!).sub(planet.systemPosition);
   s.phaseFrom.copy(tmp);
 
+  // Keep approach facing — only flatten onto the touchdown plane.
   findFlatLandingNormal(planet, normal, landN);
   ship.up!.copy(landN);
 
-  fwd.set(0, 0, -1).applyQuaternion(s.orientation);
+  fwd.copy(ship.faceDir!);
+  if (fwd.lengthSq() < 1e-6) {
+    fwd.set(0, 0, -1).applyQuaternion(s.orientation);
+  }
   fwd.addScaledVector(landN, -fwd.dot(landN));
   if (fwd.lengthSq() < 1e-6) fwd.set(1, 0, 0).addScaledVector(landN, -landN.x);
   ship.faceDir!.copy(fwd.normalize());

@@ -44,4 +44,19 @@ export const MOVEMENT = {
   flySpeedMult: 5,
   flyBoostMult: 2, // Shift while flying
   flyVerticalSpeed: 18,
+
+  // Hoverboard (toggle with H on foot). Fortnite-ish: boost, slope carve, air flips.
+  hoverboardSpeed: 26,
+  hoverboardBoostMult: 1.55,
+  hoverboardAccel: 42,
+  hoverboardFriction: 1.4,
+  hoverboardAirControl: 0.85,
+  hoverboardHeight: 0.48,
+  hoverboardWaterClearance: 1.05,
+  hoverboardJumpMult: 1.35,
+  hoverboardSlopeEase: 0.7,
+  hoverboardSlopeAccel: 38,
+  flipSpeed: 3.2,
+  flipLandDamp: 12,
+  hoverboardTrailMinSpeed: 4,
 } as const;
