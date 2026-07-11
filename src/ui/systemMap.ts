@@ -10,7 +10,6 @@ import type { StarDef } from "../config/star";
 import type { KnownSystem } from "../content/systems/catalog";
 import { orbitPositionAt } from "../worldgen/orbits";
 import { icons, kindIconSvg } from "./icons";
-import "./hud.css";
 
 export interface MapBody {
   name: string;
@@ -44,55 +43,73 @@ export interface SystemMapCallbacks {
 
 export interface SystemMap {
   readonly open: boolean;
+  readonly element: HTMLElement;
   update(data: MapData): void;
   setCatalog(systems: KnownSystem[], activeId: string, previewId: string): void;
   setTeleportBusy(busy: boolean): void;
+  setOpen(v: boolean): void;
+  mount(parent: HTMLElement): void;
+  setEmbedded(on: boolean): void;
+  setKeybindsEnabled(on: boolean): void;
   dispose(): void;
 }
 
 const PLAYER_COLOR = "#7fffd0";
+const FULLSCREEN_CLASS = "fixed inset-0 z-40 select-none overflow-hidden bg-[radial-gradient(ellipse_at_50%_40%,rgba(12,20,40,0.94),rgba(3,5,12,0.98))] font-['Exo_2',system-ui,sans-serif] text-[#e8f0f8]";
+const EMBEDDED_CLASS = "absolute inset-0 z-0 select-none overflow-hidden bg-[radial-gradient(ellipse_at_50%_40%,rgba(12,20,40,0.94),rgba(3,5,12,0.98))] font-['Exo_2',system-ui,sans-serif] text-[#e8f0f8]";
+const PANEL_CLASS = "rounded-xl border border-white/8 bg-[#141822]/94 p-4 text-[#e8f0f8] shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-md";
+const LABEL_CLASS = "flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[rgba(200,220,240,0.55)] [&_svg]:size-3";
+const META_CLASS = "mt-2 font-mono text-xs leading-relaxed text-[rgba(200,220,240,0.55)]";
+const SYS_BUTTON_CLASS = "flex w-full items-center gap-2.5 rounded-md border border-[#7fd6ff]/15 bg-white/[0.03] px-2.5 py-2 text-left font-['Exo_2',system-ui,sans-serif] text-[#e8f0f8] transition hover:border-[#7fd6ff]/40 hover:bg-[#7fd6ff]/8";
+const SYS_BUTTON_PREVIEW_CLASS = "border-[#7fd6ff]/65 bg-[#7fd6ff]/12";
+const SYS_BUTTON_HERE_CLASS = "ring-1 ring-[#ffb85a]/45";
 
 export function createSystemMap(
   root: HTMLElement,
   callbacks: SystemMapCallbacks,
 ): SystemMap {
+  let embedded = false;
+  let keybindsEnabled = true;
   const overlay = document.createElement("div");
-  overlay.className = "sb-map";
+  overlay.className = `${FULLSCREEN_CLASS} hidden`;
   overlay.innerHTML =
-    `<canvas class="sb-map-canvas"></canvas>` +
-    `<div class="sb-map-chrome">` +
-    `<div class="sb-map-title"><h1>System Map</h1><p>Known systems · preview before travel</p></div>` +
-    `<div class="sb-map-hint">` +
+    `<canvas class="absolute inset-0 block size-full cursor-grab active:cursor-grabbing"></canvas>` +
+    `<div class="pointer-events-none absolute inset-0" data-map-chrome>` +
+    `<div class="pointer-events-none absolute left-7 top-6">` +
+    `<h1 class="m-0 text-[22px] font-bold uppercase tracking-[0.2em]">System Map</h1>` +
+    `<p class="mt-1.5 text-xs uppercase tracking-[0.1em] text-[rgba(200,220,240,0.55)]">Known systems · preview before travel</p>` +
+    `</div>` +
+    `<div class="absolute right-7 top-7 text-right text-xs leading-7 tracking-[0.08em] text-[rgba(200,220,240,0.55)] [&_kbd]:mx-0.5 [&_kbd]:inline-block [&_kbd]:min-w-[18px] [&_kbd]:rounded-[3px] [&_kbd]:border [&_kbd]:border-[#7fd6ff]/30 [&_kbd]:px-1.5 [&_kbd]:py-px [&_kbd]:font-mono [&_kbd]:text-[11px] [&_kbd]:text-[#7fd6ff]">` +
     `<div><kbd>Scroll</kbd> Zoom</div>` +
     `<div><kbd>Drag</kbd> Orbit view</div>` +
     `<div><kbd>M</kbd> Close</div>` +
     `</div>` +
-    `<div class="sb-map-systems sb-panel">` +
-    `<h2>Known systems</h2>` +
-    `<div class="sb-map-systems-list" id="sb-map-syslist"></div>` +
-    `<button type="button" class="sb-map-discover" id="sb-map-discover">Discover system</button>` +
+    `<div class="${PANEL_CLASS} pointer-events-auto absolute left-7 top-[110px] flex max-h-[min(420px,55vh)] w-[250px] flex-col gap-2 px-3.5 py-3">` +
+    `<h2 class="m-0 text-[10px] uppercase tracking-[0.16em] text-[rgba(200,220,240,0.55)]">Known systems</h2>` +
+    `<div class="flex max-h-[280px] flex-col gap-1.5 overflow-y-auto pr-0.5" id="sb-map-syslist"></div>` +
+    `<button type="button" class="w-full rounded border border-dashed border-[#7fd6ff]/35 bg-transparent px-2.5 py-2 font-['Exo_2',system-ui,sans-serif] text-[11px] uppercase tracking-[0.1em] text-[#7fd6ff] transition hover:bg-[#7fd6ff]/8" id="sb-map-discover">Discover system</button>` +
     `</div>` +
-    `<div class="sb-map-legend sb-panel">` +
-    `<h2>Key</h2>` +
-    `<div class="sb-map-legend-row">${icons.sun("#ffd76a")} Star</div>` +
-    `<div class="sb-map-legend-row">${icons.planet("#8fbcff")} Planet</div>` +
-    `<div class="sb-map-legend-row">${icons.station("#7ab0ff")} Station</div>` +
-    `<div class="sb-map-legend-row">${icons.you(PLAYER_COLOR)} You</div>` +
+    `<div class="${PANEL_CLASS} pointer-events-none absolute bottom-6 left-7 min-w-[180px] px-4 py-3.5">` +
+    `<h2 class="mb-2.5 mt-0 text-[11px] uppercase tracking-[0.18em] text-[rgba(200,220,240,0.55)]">Key</h2>` +
+    `<div class="my-2 flex items-center gap-2.5 text-[13px] [&_svg]:size-4">${icons.sun("#ffd76a")} Star</div>` +
+    `<div class="my-2 flex items-center gap-2.5 text-[13px] [&_svg]:size-4">${icons.planet("#8fbcff")} Planet</div>` +
+    `<div class="my-2 flex items-center gap-2.5 text-[13px] [&_svg]:size-4">${icons.station("#7ab0ff")} Station</div>` +
+    `<div class="my-2 flex items-center gap-2.5 text-[13px] [&_svg]:size-4">${icons.you(PLAYER_COLOR)} You</div>` +
     `</div>` +
-    `<div class="sb-map-zoom">` +
-    `<button type="button" id="sb-map-zi" title="Zoom in">${icons.zoomIn()}</button>` +
-    `<button type="button" id="sb-map-zo" title="Zoom out">${icons.zoomOut()}</button>` +
+    `<div class="pointer-events-auto absolute bottom-6 right-7 flex flex-col gap-2">` +
+    `<button type="button" class="flex size-9 items-center justify-center border border-[#7fd6ff]/30 bg-[rgba(6,12,22,0.72)] font-mono text-lg text-[#7fd6ff] transition hover:bg-[#7fd6ff]/12" id="sb-map-zi" title="Zoom in">${icons.zoomIn()}</button>` +
+    `<button type="button" class="flex size-9 items-center justify-center border border-[#7fd6ff]/30 bg-[rgba(6,12,22,0.72)] font-mono text-lg text-[#7fd6ff] transition hover:bg-[#7fd6ff]/12" id="sb-map-zo" title="Zoom out">${icons.zoomOut()}</button>` +
     `</div>` +
-    `<div class="sb-map-selected sb-panel" id="sb-map-sel">` +
-    `<div class="sb-label" id="sb-map-sel-kind"></div>` +
-    `<h3 id="sb-map-sel-name"></h3>` +
-    `<div class="meta" id="sb-map-sel-meta"></div>` +
+    `<div class="${PANEL_CLASS} pointer-events-none absolute bottom-7 right-7 hidden w-60 px-[18px] py-4" id="sb-map-sel">` +
+    `<div class="${LABEL_CLASS}" id="sb-map-sel-kind"></div>` +
+    `<h3 class="m-0 text-lg uppercase tracking-[0.08em]" id="sb-map-sel-name"></h3>` +
+    `<div class="${META_CLASS}" id="sb-map-sel-meta"></div>` +
     `</div>` +
-    `<div class="sb-map-travel sb-panel" id="sb-map-travel">` +
-    `<div class="sb-label">Preview</div>` +
-    `<h3 id="sb-map-travel-name">—</h3>` +
-    `<div class="meta" id="sb-map-travel-meta"></div>` +
-    `<button type="button" class="sb-map-teleport" id="sb-map-teleport">Teleport</button>` +
+    `<div class="${PANEL_CLASS} pointer-events-auto absolute right-7 top-[110px] hidden w-60 px-4 py-3.5" id="sb-map-travel">` +
+    `<div class="${LABEL_CLASS}">Preview</div>` +
+    `<h3 class="mb-1.5 mt-1 text-base font-bold" id="sb-map-travel-name">—</h3>` +
+    `<div class="mb-3 text-[11px] leading-relaxed text-[rgba(200,220,240,0.55)]" id="sb-map-travel-meta"></div>` +
+    `<button type="button" class="w-full rounded-md bg-[#e8623a] px-3 py-2.5 font-['Exo_2',system-ui,sans-serif] text-[13px] font-semibold uppercase tracking-[0.06em] text-white transition hover:brightness-110 disabled:cursor-default disabled:bg-[#445] disabled:opacity-45" id="sb-map-teleport">Teleport</button>` +
     `</div>` +
     `</div>`;
   root.appendChild(overlay);
@@ -178,7 +195,7 @@ export function createSystemMap(
   const labelLayer = document.createElement("div");
   labelLayer.style.cssText =
     "position:absolute;inset:0;pointer-events:none;overflow:hidden;";
-  overlay.querySelector(".sb-map-chrome")!.appendChild(labelLayer);
+  overlay.querySelector("[data-map-chrome]")!.appendChild(labelLayer);
 
   type BodyVis = {
     body: MapBody;
@@ -342,18 +359,25 @@ export function createSystemMap(
   };
 
   const size = () => {
-    const w = window.innerWidth, h = window.innerHeight;
+    const rect = overlay.getBoundingClientRect();
+    const w = Math.max(2, Math.floor(rect.width || window.innerWidth));
+    const h = Math.max(2, Math.floor(rect.height || window.innerHeight));
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
   };
 
+  const applyShellClass = () => {
+    const base = embedded ? EMBEDDED_CLASS : FULLSCREEN_CLASS;
+    overlay.className = open ? base : `${base} hidden`;
+  };
+
   const showSelected = (b: MapBody | null, data: MapData) => {
     if (!b) {
-      selPanel.classList.remove("is-on");
+      selPanel.classList.add("hidden");
       return;
     }
-    selPanel.classList.add("is-on");
+    selPanel.classList.remove("hidden");
     selKind.innerHTML = `${kindIconSvg(b.kind, b.color)} ${b.kind}`;
     selName.textContent = b.name;
     selName.style.color = b.color;
@@ -371,10 +395,10 @@ export function createSystemMap(
   const refreshTravelPanel = () => {
     const entry = catalog.find((s) => s.def.id === previewSystemId);
     if (!entry) {
-      travelPanel.classList.remove("is-on");
+      travelPanel.classList.add("hidden");
       return;
     }
-    travelPanel.classList.add("is-on");
+    travelPanel.classList.remove("hidden");
     travelName.textContent = entry.def.name;
     travelName.style.color = entry.def.star.color;
     const here = entry.def.id === activeSystemId;
@@ -395,14 +419,16 @@ export function createSystemMap(
     for (const s of catalog) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "sb-map-sysbtn";
-      if (s.def.id === previewSystemId) btn.classList.add("is-preview");
-      if (s.def.id === activeSystemId) btn.classList.add("is-here");
+      btn.className = [
+        SYS_BUTTON_CLASS,
+        s.def.id === previewSystemId ? SYS_BUTTON_PREVIEW_CLASS : "",
+        s.def.id === activeSystemId ? SYS_BUTTON_HERE_CLASS : "",
+      ].filter(Boolean).join(" ");
       btn.innerHTML =
-        `<span class="sb-map-sysdot" style="background:${s.def.star.color}"></span>` +
-        `<span class="sb-map-sysinfo">` +
-        `<span class="sb-map-sysname">${s.def.name}</span>` +
-        `<span class="sb-map-sysmeta">${s.def.star.type} · ${s.def.planets.length} worlds` +
+        `<span class="size-2.5 shrink-0 rounded-full shadow-[0_0_8px_rgba(255,255,255,0.35)]" style="background:${s.def.star.color}"></span>` +
+        `<span class="flex min-w-0 flex-col gap-0.5">` +
+        `<span class="overflow-hidden text-ellipsis whitespace-nowrap text-xs font-semibold tracking-[0.04em]">${s.def.name}</span>` +
+        `<span class="text-[10px] uppercase tracking-[0.06em] text-[rgba(200,220,240,0.55)]">${s.def.star.type} · ${s.def.planets.length} worlds` +
         (s.def.id === activeSystemId ? " · here" : "") +
         `</span></span>`;
       btn.addEventListener("click", () => {
@@ -448,7 +474,7 @@ export function createSystemMap(
   const setOpen = (v: boolean) => {
     if (v === open) return;
     open = v;
-    overlay.classList.toggle("is-on", v);
+    applyShellClass();
     if (v) {
       size();
       orbitsBuilt = false;
@@ -459,12 +485,13 @@ export function createSystemMap(
       renderCatalogList();
       if (lastData) draw(lastData);
     } else {
-      selPanel.classList.remove("is-on");
+      selPanel.classList.add("hidden");
     }
     callbacks.onToggle(v);
   };
 
   const onKey = (e: KeyboardEvent) => {
+    if (!keybindsEnabled) return;
     if (e.code === "KeyM") { e.preventDefault(); setOpen(!open); }
     if (!open) return;
     if (e.code === "Escape") setOpen(false);
@@ -536,6 +563,7 @@ export function createSystemMap(
 
   return {
     get open() { return open; },
+    get element() { return overlay; },
     update(data) {
       lastData = data;
       if (open) draw(data);
@@ -560,10 +588,24 @@ export function createSystemMap(
       teleportBusy = busy;
       refreshTravelPanel();
     },
+    setOpen,
+    mount(parent) {
+      if (overlay.parentElement === parent) return;
+      parent.appendChild(overlay);
+      if (open) requestAnimationFrame(() => size());
+    },
+    setEmbedded(on) {
+      embedded = on;
+      applyShellClass();
+      if (open) requestAnimationFrame(() => size());
+    },
+    setKeybindsEnabled(on) {
+      keybindsEnabled = on;
+    },
     dispose() {
       window.removeEventListener("keydown", onKey);
       renderer.dispose();
-      root.removeChild(overlay);
+      overlay.remove();
     },
   };
 }

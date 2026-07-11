@@ -295,7 +295,8 @@ export function updateShipFlight(
   }
   s.velocity.addScaledVector(forward, accelMag * dt);
 
-  applyOrbitalGravity(ship, deps.planets, deps.starBody, deps.time, dt, frameVel);
+  // Free flight: keep orbital frame matching / damping, but no gravity pull.
+  applyOrbitalGravity(ship, deps.planets, deps.starBody, deps.time, dt, frameVel, 0);
 
   const cap = s.boosting ? SHIP.maxSpeed * SHIP.boostMultiplier : SHIP.maxSpeed;
   relVel.copy(s.velocity).sub(frameVel);

@@ -1,7 +1,9 @@
-import { Mesh, Vector3, LOD, type Camera } from "three";
+import { Group, Mesh, Vector3, LOD, type Camera, type MeshToonMaterial } from "three";
 import { createRng } from "../engine/rng";
 import { createPlanet, type Planet } from "./planet";
-import { buildPlanetMesh, buildPlanetMeshAsync, lodSegments } from "./planetMesh";
+import {
+  buildPlanetMesh, buildPlanetMeshAsync, createFaceGroup, lodSegments,
+} from "./planetMesh";
 import { createTerrainMaterial } from "../visuals/toonMaterial";
 import { createAtmosphere, type Atmosphere } from "../visuals/atmosphere";
 import { createPlanetRocks, type PlanetRocks } from "../visuals/planetRocks";
@@ -9,11 +11,30 @@ import { createPlanetOre, type PlanetOre } from "../visuals/planetOre";
 import { createPlanetLiquid, type PlanetLiquidMesh } from "../visuals/planetLiquid";
 import { createPlanetRings, type PlanetRingsMesh } from "../visuals/planetRings";
 import type { PlanetDef } from "../content/planets/types";
+import { geometryTriangleCount } from "../engine/meshStats";
+import { applyCubeFaceVisibility } from "./planetFaceCull";
+
+export type TerrainLodLevel = "high" | "mid" | "low" | "none";
+
+export const LOD_DEBUG_COLORS = {
+  high: "#3dff8a",
+  mid: "#ffe14a",
+  low: "#ff5a6e",
+} as const;
+
+export interface TerrainLodDebug {
+  level: TerrainLodLevel;
+  segments: number;
+  triangles: number;
+  highLoaded: boolean;
+  highBuilding: boolean;
+  camDist: number;
+}
 
 export interface PlanetInstance {
   def: PlanetDef;
   planet: Planet;
-  mesh: Mesh;
+  mesh: Group;
   lod: LOD;
   atmosphere: Atmosphere;
   rocks: PlanetRocks;
@@ -26,33 +47,32 @@ export interface PlanetInstance {
   prevSystemPosition: Vector3;
   dispose(): void;
   updateLod(camera: Camera): void;
+  setLodDebugTint(enabled: boolean): void;
+  getTerrainLodDebug(camera: Camera): TerrainLodDebug;
 }
 
 export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstance> {
   const rng = createRng(def.seed);
   const planet = createPlanet(def, rng.world);
   const segs = lodSegments(def.faceSegments);
-  const mat = createTerrainMaterial();
+  const matHigh = createTerrainMaterial();
+  const matMid = createTerrainMaterial();
+  const matLow = createTerrainMaterial();
 
-  const midBuilt = buildPlanetMesh(planet, segs.mid);
-  const lowBuilt = buildPlanetMesh(planet, segs.low);
+  const midBuilt = buildPlanetMesh(planet, segs.mid, matMid);
+  const lowBuilt = buildPlanetMesh(planet, segs.low, matLow);
 
-  const meshMid = new Mesh(midBuilt.geometry, mat);
-  const meshLow = new Mesh(lowBuilt.geometry, mat);
-  const meshHigh = new Mesh(midBuilt.geometry, mat);
-  meshHigh.visible = false;
-  for (const m of [meshHigh, meshMid, meshLow]) {
-    m.receiveShadow = false;
-    m.castShadow = false;
-    m.frustumCulled = false;
-  }
+  const highGroup = new Group();
+  highGroup.visible = false;
+  let highFaces: Mesh[] = [];
+  let highGeos = midBuilt.geometries;
 
   const r = planet.maxR;
   const nearDist = r + 140;
   const farDist = r * 2.8;
   const lod = new LOD();
-  lod.addLevel(meshMid, 0);
-  lod.addLevel(meshLow, farDist);
+  lod.addLevel(midBuilt.group, 0);
+  lod.addLevel(lowBuilt.group, farDist);
   lod.autoUpdate = false;
 
   const atmosphere = createAtmosphere(planet, rng.world);
@@ -64,8 +84,7 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
   const ore = createPlanetOre(planet, createRng(`${def.seed}-ore`).world);
   lod.add(ore.group);
 
-  // Match near-surface (high) terrain density so water facets match land.
-  const liquid = createPlanetLiquid(planet, segs.high);
+  const liquid = createPlanetLiquid(planet, segs);
   if (liquid) lod.add(liquid.mesh);
 
   const rings = createPlanetRings(def.radius, def.rings ?? []);
@@ -76,16 +95,17 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
   let building = false;
   let highOwnsGeo = false;
   let jobToken = 0;
+  const camLocal = new Vector3();
 
   const rebuildLevels = (withHigh: boolean) => {
     while (lod.levels.length) lod.levels.pop();
     if (withHigh) {
-      lod.addLevel(meshHigh, 0);
-      lod.addLevel(meshMid, nearDist);
-      lod.addLevel(meshLow, farDist);
+      lod.addLevel(highGroup, 0);
+      lod.addLevel(midBuilt.group, nearDist);
+      lod.addLevel(lowBuilt.group, farDist);
     } else {
-      lod.addLevel(meshMid, 0);
-      lod.addLevel(meshLow, farDist);
+      lod.addLevel(midBuilt.group, 0);
+      lod.addLevel(lowBuilt.group, farDist);
     }
   };
 
@@ -94,13 +114,17 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
     jobToken++;
     building = false;
     if (highOwnsGeo) {
-      const geo = meshHigh.geometry;
-      meshHigh.geometry = midBuilt.geometry;
-      if (geo !== midBuilt.geometry) geo.dispose();
+      for (const g of highGeos) {
+        if (!midBuilt.geometries.includes(g)) g.dispose();
+      }
       highOwnsGeo = false;
     }
-    meshHigh.visible = false;
+    while (highGroup.children.length) highGroup.remove(highGroup.children[0]);
+    highFaces = [];
+    highGeos = midBuilt.geometries;
+    highGroup.visible = false;
     highLoaded = false;
+    liquid?.releaseHigh();
     rebuildLevels(false);
   };
 
@@ -109,16 +133,20 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
     building = true;
     const token = ++jobToken;
     buildPlanetMeshAsync(def, def.seed, segs.high, planet.seaLevel)
-      .then((geometry) => {
+      .then((geometries) => {
         if (token !== jobToken || !highWanted) {
-          geometry.dispose();
+          for (const g of geometries) g.dispose();
           building = false;
           return;
         }
-        const old = meshHigh.geometry;
-        meshHigh.geometry = geometry;
-        meshHigh.visible = true;
-        if (highOwnsGeo && old !== midBuilt.geometry) old.dispose();
+        while (highGroup.children.length) highGroup.remove(highGroup.children[0]);
+        if (highOwnsGeo) {
+          for (const g of highGeos) g.dispose();
+        }
+        const built = createFaceGroup(geometries, matHigh);
+        for (const face of built.faces) highGroup.add(face);
+        highFaces = built.faces;
+        highGeos = geometries;
         highOwnsGeo = true;
         highLoaded = true;
         building = false;
@@ -129,10 +157,56 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
       });
   };
 
+  let debugTint = false;
+
+  const applyTint = () => {
+    const mats: { mat: MeshToonMaterial; hex: string }[] = [
+      { mat: matHigh, hex: LOD_DEBUG_COLORS.high },
+      { mat: matMid, hex: LOD_DEBUG_COLORS.mid },
+      { mat: matLow, hex: LOD_DEBUG_COLORS.low },
+    ];
+    for (const { mat, hex } of mats) {
+      mat.color.set(debugTint ? hex : "#ffffff");
+      mat.needsUpdate = true;
+    }
+  };
+
+  const activeLevel = (): TerrainLodLevel => {
+    if (highGroup.visible) return "high";
+    if (midBuilt.group.visible) return "mid";
+    if (lowBuilt.group.visible) return "low";
+    return "none";
+  };
+
+  const activeFaces = (): Mesh[] => {
+    const level = activeLevel();
+    if (level === "high") return highFaces;
+    if (level === "mid") return midBuilt.faces;
+    if (level === "low") return lowBuilt.faces;
+    return [];
+  };
+
+  const segmentsFor = (level: TerrainLodLevel): number => {
+    if (level === "high") return segs.high;
+    if (level === "mid") return segs.mid;
+    if (level === "low") return segs.low;
+    return 0;
+  };
+
+  const syncLiquidLod = (level: TerrainLodLevel) => {
+    if (!liquid || level === "none") return;
+    if (level === "high") {
+      liquid.ensureHigh(planet, segs.high);
+      liquid.setLodLevel("high");
+    } else {
+      liquid.setLodLevel(level);
+    }
+  };
+
   return {
     def,
     planet,
-    mesh: meshMid,
+    mesh: midBuilt.group,
     lod,
     atmosphere,
     rocks,
@@ -147,11 +221,15 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
       jobToken++;
       lod.removeFromParent();
       atmosphere.skyDome.removeFromParent();
-      midBuilt.geometry.dispose();
-      lowBuilt.geometry.dispose();
-      if (highOwnsGeo && meshHigh.geometry !== midBuilt.geometry) {
-        meshHigh.geometry.dispose();
+      midBuilt.disposeGeometries();
+      lowBuilt.disposeGeometries();
+      if (highOwnsGeo) {
+        for (const g of highGeos) g.dispose();
       }
+      matHigh.dispose();
+      matMid.dispose();
+      matLow.dispose();
+      liquid?.dispose();
       rocks.group.removeFromParent();
       ore.group.traverse((o) => {
         const m = o as Mesh;
@@ -169,6 +247,34 @@ export async function createPlanetInstance(def: PlanetDef): Promise<PlanetInstan
       if (highWanted) loadHigh();
       else if (dist > nearDist + 220) unloadHigh();
       lod.update(camera);
+
+      const level = activeLevel();
+      syncLiquidLod(level);
+
+      camLocal.copy(camera.position).sub(lod.position);
+      applyCubeFaceVisibility(activeFaces(), camLocal, planet.maxR);
+      if (liquid && liquid.mesh.visible) {
+        liquid.applyFaceCull(camLocal, planet.maxR);
+      }
+    },
+    setLodDebugTint(enabled) {
+      debugTint = enabled;
+      applyTint();
+    },
+    getTerrainLodDebug(camera) {
+      const level = activeLevel();
+      let triangles = 0;
+      for (const face of activeFaces()) {
+        if (face.visible) triangles += geometryTriangleCount(face.geometry);
+      }
+      return {
+        level,
+        segments: segmentsFor(level),
+        triangles,
+        highLoaded,
+        highBuilding: building,
+        camDist: camera.position.distanceTo(lod.position),
+      };
     },
   };
 }

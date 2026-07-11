@@ -7,6 +7,11 @@ import type { PlanetInstance } from "../worldgen/planetInstance";
 import type { SpaceHud } from "./spaceHud";
 import type { AnimatedCharacter } from "../visuals/animatedCharacter";
 import { updatePlayerMovement } from "./playerMovement";
+import { hasEquippedMount, type PlayerInventory } from "../inventory/playerInventory";
+import { getItem } from "../content/items";
+import {
+  findFocusedDrop, tryPickupDrop, type WorldDrop,
+} from "./worldDrops";
 import { updateShipFlight, beginWarp, stopWarp, getWarpLockName } from "./shipFlight";
 import { syncVelocityToPlanet } from "./shipGravity";
 import {
@@ -23,6 +28,7 @@ export interface PossessionState {
   mode: Possessed;
   currentPlanet: PlanetInstance;
   dockBay: number | null;
+  boardPhase: "idle" | "boarding" | "exiting";
 }
 
 let warpBlockPromptT = 0;
@@ -44,6 +50,9 @@ export interface PossessionDeps {
   // Camera / reticle forward in system space — used for hyperdrive lock-on so
   // the cone matches what the player sees through the crosshair.
   getAimDir: () => Vector3;
+  inventory: PlayerInventory;
+  getCamLook?: () => { pos: Vector3; forward: Vector3; planetLodPos: Vector3 };
+  onPickup?: () => void;
 }
 
 const dir = new Vector3();
@@ -57,28 +66,74 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
   STAR_BODY.radius = deps.starRadius;
 
   if (state.mode === "onFoot") {
+    if (state.boardPhase === "boarding") {
+      hud.setPrompt("Boarding…");
+      return;
+    }
+    if (state.boardPhase === "exiting") {
+      hud.setPrompt("Exiting…");
+      return;
+    }
+
     const rocks = state.currentPlanet.rocks;
     const ore = state.currentPlanet.ore;
     updatePlayerMovement(
       world, state.currentPlanet.planet, input, deps.onFootForward, dt,
-      rocks, ore,
+      rocks, ore, deps.inventory,
     );
     const m = player.movement!;
-    deps.character.setLocomotion(m.speed01, m.grounded, m.inLiquid && !m.flying);
-    if (m.didJump && !m.inLiquid) deps.character.play("jump");
-    if (m.didSlide && !m.inLiquid) deps.character.play("slide");
+    deps.character.setBindPose(m.hoverboarding);
+    if (!m.hoverboarding) {
+      deps.character.setLocomotion(m.speed01, m.grounded, m.inLiquid && !m.flying);
+      if (m.didJump && !m.inLiquid) deps.character.play("jump");
+      if (m.didSlide && !m.inLiquid) deps.character.play("slide");
+    }
     deps.character.update(dt);
 
     const distToShip = player.position!.distanceTo(ship.position!);
+    const hasBoard = hasEquippedMount(deps.inventory, "hoverboard");
     if (distToShip < SHIP.enterRange && s.mode === "landed" && state.dockBay === null) {
-      hud.setPrompt("Press E to board ship");
+      hud.setPrompt(m.hoverboarding
+        ? "Press E to board ship · H stow board"
+        : hasBoard
+          ? "Press E to board ship · H hoverboard"
+          : "Press E to board ship");
       if (input.justPressed("KeyE")) {
-        state.mode = "ship";
+        m.hoverboarding = false;
+        deps.character.setBindPose(false);
+        state.boardPhase = "boarding";
         syncVelocityToPlanet(ship, state.currentPlanet, game.time);
       }
     } else {
-      hud.clearPrompt();
+      let focused: WorldDrop | null = null;
+      if (deps.getCamLook) {
+        const look = deps.getCamLook();
+        focused = findFocusedDrop(
+          state.currentPlanet.def.id,
+          player.position!,
+          look.pos,
+          look.forward,
+          look.planetLodPos,
+        );
+      }
+      if (focused) {
+        const name = getItem(focused.itemId)?.name ?? "item";
+        const qty = focused.qty > 1 ? ` ×${focused.qty}` : "";
+        hud.setPrompt(`Press E to pick up ${name}${qty}`);
+        if (input.justPressed("KeyE")) {
+          if (tryPickupDrop(focused, deps.inventory)) deps.onPickup?.();
+        }
+      } else if (m.hoverboarding) {
+        hud.setPrompt("Hoverboard · Shift boost · Space jump · A/D air roll · H stow");
+      } else {
+        hud.clearPrompt();
+      }
     }
+    return;
+  }
+
+  if (state.boardPhase === "boarding" || state.boardPhase === "exiting") {
+    hud.setPrompt(state.boardPhase === "boarding" ? "Boarding…" : "Exiting…");
     return;
   }
 
@@ -120,7 +175,8 @@ export function updatePossession(state: PossessionState, deps: PossessionDeps, d
       player.prevPosition!.copy(player.position!);
       player.movement!.up.copy(dir);
       player.movement!.velocity.set(0, 0, 0);
-      state.mode = "onFoot";
+      player.movement!.faceDir.copy(ship.faceDir!);
+      state.boardPhase = "exiting";
       return;
     }
     if (input.justPressed("KeyW")) {

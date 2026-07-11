@@ -37,6 +37,7 @@ export function applyOrbitalGravity(
   time: number,
   dt: number,
   frameVelOut: Vector3,
+  pullScale = 1,
 ): { dominantPlanetId: string | null; inWell: boolean } {
   const s = ship.ship!;
   const pos = ship.position!;
@@ -57,9 +58,11 @@ export function applyOrbitalGravity(
       const influence = smoothInfluence(dist, influenceR);
       totalInfluence = Math.max(totalInfluence, influence);
 
-      gravDir.copy(toPlanet).multiplyScalar(1 / dist);
-      const g = SHIP.gravityStrengthAtSurface * (radius / dist) ** 2;
-      s.velocity.addScaledVector(gravDir, g * influence * dt);
+      if (pullScale > 0) {
+        gravDir.copy(toPlanet).multiplyScalar(1 / dist);
+        const g = SHIP.gravityStrengthAtSurface * (radius / dist) ** 2 * pullScale;
+        s.velocity.addScaledVector(gravDir, g * influence * dt);
+      }
 
       if (influence > bestInfluence) {
         bestInfluence = influence;
@@ -71,10 +74,10 @@ export function applyOrbitalGravity(
   toPlanet.copy(starBody.systemPosition).sub(pos);
   const starDist = toPlanet.length();
   const starInfluenceR = starBody.radius * SHIP.gravityInfluenceRadii;
-  if (starDist < starInfluenceR && starDist > 1) {
+  if (pullScale > 0 && starDist < starInfluenceR && starDist > 1) {
     const influence = smoothInfluence(starDist, starInfluenceR);
     gravDir.copy(toPlanet).multiplyScalar(1 / starDist);
-    const g = SHIP.gravityStrengthAtSurface * 0.15 * (starBody.radius / starDist) ** 2;
+    const g = SHIP.gravityStrengthAtSurface * 0.15 * (starBody.radius / starDist) ** 2 * pullScale;
     s.velocity.addScaledVector(gravDir, g * influence * dt);
   }
 

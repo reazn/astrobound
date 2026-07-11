@@ -1,11 +1,12 @@
-// Fixed-timestep game loop. Simulation advances in fixed dt steps (so physics &
-// game logic are deterministic and multiplayer-ready); rendering happens once
-// per animation frame with an interpolation alpha between the last two sim
-// states. Guards against the "spiral of death" by clamping the accumulator.
+// Fixed-timestep game loop. Simulation advances in fixed dt steps; rendering
+// happens once per frame with an interpolation alpha. When uncapped (debug),
+// frames are scheduled via MessageChannel so FPS isn't stuck on display VSync.
 
 export interface Loop {
   start(): void;
   stop(): void;
+  setUncapped(uncapped: boolean): void;
+  readonly uncapped: boolean;
 }
 
 export interface LoopOptions {
@@ -21,6 +22,26 @@ export function createLoop(opts: LoopOptions): Loop {
   let last = 0;
   let raf = 0;
   let running = false;
+  let uncapped = false;
+  let timeoutId = 0;
+  const channel = typeof MessageChannel !== "undefined" ? new MessageChannel() : null;
+  // Soft cap so uncapped mode doesn't melt the machine (~500 fps).
+  const MIN_UNCAP_MS = 2;
+
+  const schedule = () => {
+    if (!running) return;
+    if (uncapped && channel) {
+      const elapsed = performance.now() - last;
+      const wait = Math.max(0, MIN_UNCAP_MS - elapsed);
+      if (wait > 0) {
+        timeoutId = window.setTimeout(() => channel.port2.postMessage(null), wait);
+      } else {
+        channel.port2.postMessage(null);
+      }
+    } else {
+      raf = requestAnimationFrame(frame);
+    }
+  };
 
   const frame = (now: number) => {
     if (!running) return;
@@ -37,19 +58,36 @@ export function createLoop(opts: LoopOptions): Loop {
     }
 
     opts.render(accumulator / opts.fixedDt);
-    raf = requestAnimationFrame(frame);
+    schedule();
   };
 
+  if (channel) {
+    channel.port1.onmessage = () => frame(performance.now());
+  }
+
   return {
+    get uncapped() {
+      return uncapped;
+    },
+    setUncapped(v) {
+      if (uncapped === v) return;
+      uncapped = v;
+      if (!running) return;
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeoutId);
+      last = performance.now();
+      schedule();
+    },
     start() {
       if (running) return;
       running = true;
       last = performance.now();
-      raf = requestAnimationFrame(frame);
+      schedule();
     },
     stop() {
       running = false;
       cancelAnimationFrame(raf);
+      window.clearTimeout(timeoutId);
     },
   };
 }

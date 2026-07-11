@@ -56,20 +56,32 @@ export function createRenderer(container: HTMLElement): RenderContext {
     antialias: true,
     powerPreference: "high-performance",
     logarithmicDepthBuffer: true,
+    // Chromium: present off the compositor timeline when supported.
+    ...({ desynchronized: true } as object),
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = false;
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFSoftShadowMap;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   container.appendChild(renderer.domElement);
 
-  // Sun: the star, as a directional key light (repositioned toward the real
-  // star direction every frame). Shadows stay off — a directional shadow map
-  // paints a hard orthographic square on planet-scale terrain.
+  // Tight directional shadow around the focus (player/ship). Planet-scale maps
+  // draw a hard orthographic square — keep the frustum small and follow the
+  // camera each frame instead.
   const sun = new DirectionalLight(new Color(STAR.color), STAR.lightIntensity * 0.7);
-  sun.castShadow = false;
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.00025;
+  sun.shadow.normalBias = 0.035;
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = 70;
+  sun.shadow.camera.left = -22;
+  sun.shadow.camera.right = 22;
+  sun.shadow.camera.top = 22;
+  sun.shadow.camera.bottom = -22;
+  sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
   scene.add(sun.target);
 

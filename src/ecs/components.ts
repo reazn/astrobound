@@ -23,6 +23,11 @@ export interface MovementState {
   didSlide: boolean;
   flying: boolean;
   inLiquid: boolean;
+  hoverboarding: boolean;
+  hoverPitch: number;
+  hoverRoll: number;
+  hoverPitchVel: number;
+  hoverRollVel: number;
 }
 
 export interface DerivedStats {

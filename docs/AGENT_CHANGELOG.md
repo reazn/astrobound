@@ -4,6 +4,176 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-11 — Lift XP level badge above bar
+- **Summary:** Reserved `h-12` for the XP footer so the level circle sits fully on top of the thin bar (not clipped under the viewport).
+- **Areas:** `src/ui/settingsMenu.ts`
+
+---
+
+### 2026-07-11 — HUD Tailwind utilities
+- **Summary:** Converted the remaining HUD, system map, loading, debug, marker, preview, and underwater overlay UI from `hud.css` class dependencies to Tailwind utility classes while preserving DOM IDs and behavior.
+- **Areas:** `index.html`, `src/styles.css`, `src/main.ts`, `src/ui/systemMap.ts`, `src/systems/spaceHud.ts`, `src/systems/debugOverlay.ts`, `src/ui/loadingScreen.ts`, `src/systems/worldMarkers.ts`, `src/ui/itemPreview.ts`
+- **Notes:** `hud.css` is no longer imported by source modules; visibility toggles now use `hidden` or Tailwind opacity utilities.
+
+---
+
+### 2026-07-11 — Inventory Tailwind utilities
+- **Summary:** Converted the inventory UI markup from `hud.css` class names to Tailwind utility classes in `inventory.ts`, including panels, slots, rarity treatments, tooltip, drag ghost, and body-mounted context menu.
+- **Areas:** `src/ui/inventory.ts`
+
+---
+
+### 2026-07-11 — Map clears social; slim XP bar
+- **Summary:** System map is a flex sibling beside the social rail (no overlap). Bottom XP is a full-width fill only — level circle + `current / next` sit on the bar; duplicate social level badge and “Experience” label removed.
+- **Areas:** `src/ui/settingsMenu.ts`
+
+---
+
+### 2026-07-11 — ESC menu tabs, full map, XP bar
+- **Summary:** Top tabs are full header height and heavier. Map fills the whole body under the header (social floats above). Social rail drops the header; add-friend sits under the last friend; thin state uses fixed-width rows to kill the bottom scrollbar. Bottom XP bar spans the menu; level badge lives at the foot of the social rail.
+- **Areas:** `src/ui/settingsMenu.ts`, `src/ui/systemMap.ts`
+
+---
+
+### 2026-07-11 — Restore Tailwind padding/margins
+- **Summary:** Removed unlayered `* { margin:0; padding:0 }` from `index.html` — it was beating Tailwind `@layer utilities`, so every `p-*` / `m-*` / `mx-auto` computed to 0. Box-sizing stays in layered base CSS.
+- **Areas:** `index.html`, `src/styles.css`
+
+---
+
+### 2026-07-11 — Fix ESC menu spacing/centering
+- **Summary:** Menu content now centers in the main column via flex (`basis-full` + `justify-center`) after `mx-auto` failed to apply. Tightened social rail padding, card padding, vertically centers non-map tabs, hides HUD hint while open.
+- **Areas:** `src/ui/settingsMenu.ts`
+
+---
+
+### 2026-07-11 — ESC game menu + Tailwind default
+- **Summary:** Rebuilt Escape into a full-width game menu: top bar (Astrobound + Map / Character / Skills / Settings), max-width content, hover-expand social rail. Map tab embeds the system map; Character switches astronauts; Skills are placeholder cards; Settings keeps FOV/ship etc. Added Tailwind v4 (`@tailwindcss/vite`) as the UI default — removed `hud.css`, converted inventory/HUD/map/loading/debug to utility classes in `src/styles.css`.
+- **Areas:** `vite.config.ts`, `src/styles.css`, `src/ui/settingsMenu.ts`, `src/ui/systemMap.ts`, `src/ui/inventory.ts`, `src/systems/spaceHud.ts`, `src/main.ts`, `index.html`
+
+---
+
+### 2026-07-11 — Item defs: trait/gem slot counts only
+- **Summary:** Removed baked trait/gem content from mount item defs. Config now only declares `traitSlots` / `gemSlots` limits; tooltips render empty slots from those counts (instance data comes later).
+- **Areas:** `src/content/items/types.ts`, `src/content/items/mounts/*/item.ts`, `src/ui/inventory.ts`
+
+---
+
+### 2026-07-11 — Face-on inv cam, gear tooltips, category items
+- **Summary:** Inventory inspect places the camera straight-on to the character, then pans right by ~20% of screen width (character stays put; only turns). Removed inventory backdrop blur. Slot borders are 2px; item previews sit at 45° yaw. Restored gear score / 3 traits / 2 gems on equippable defs and in tooltips. Items are no longer rarity clones of one id — distinct mounts (Skiff Plank, Pulse Deck, Hoverboard, Void Rider, Starwake) under `content/items/mounts/`, ores under `content/items/ores/`.
+- **Areas:** `src/systems/inventoryInspect.ts`, `src/ui/hud.css`, `src/ui/itemPreview.ts`, `src/ui/inventory.ts`, `src/content/items/**`, `src/inventory/playerInventory.ts`, `src/visuals/hoverboard.ts`
+
+---
+
+### 2026-07-11 — Double-click equip + inv chrome match ESC
+- **Summary:** Double-clicking an equippable bag item equips it (swaps with the occupied slot). Drag starts only after a small move threshold so clicks work. Added a hoverboard for each rarity for testing. Inventory panels/slots/menus restyled to match ESC settings (system-ui, dark slate panels, 14px radius, terracotta accent, blur backdrop).
+- **Areas:** `src/ui/inventory.ts`, `src/ui/hud.css`, `src/content/items/hoverboard/item.ts`, `src/content/items/index.ts`, `src/inventory/playerInventory.ts`
+
+---
+
+### 2026-07-11 — Split submenu + cleaner drops
+- **Summary:** Context Split is a second menu step (back + slider) instead of always-visible inline controls. World drops drop the ring/orb/pad — larger item mesh, local point light, and a single upward particle plume; materials get an emissive boost so they read in shade.
+- **Areas:** `src/ui/inventory.ts`, `src/ui/hud.css`, `src/systems/worldDrops.ts`, `src/content/items/silver/model.ts`
+
+---
+
+### 2026-07-11 — Inv cam translate, drops, boarding FX, land closer
+- **Summary:** Inventory inspect no longer orbits 180° — camera only translates right + slight zoom while the player turns. Context split is inline in the right-click menu (Exo font); inventory header restyled with search + sort/stack icons. Drops are larger with glow/ring and seated on terrain; inventory previews use a fixed pose (no random yaw). Reverted soft flight gravity / atmo speed caps. Landing keeps facing, sits closer (`landedHeight` 2.15), and eases the chase cam. Boarding/exiting runs a ~1s dissolve + particle stream to/from the ship.
+- **Areas:** `src/systems/inventoryInspect.ts`, `src/ui/inventory.ts`, `src/ui/hud.css`, `src/ui/itemPreview.ts`, `src/systems/worldDrops.ts`, `src/config/ship.ts`, `src/systems/shipFlight.ts`, `src/systems/shipGravity.ts`, `src/systems/shipTransition.ts`, `src/systems/shipCamera.ts`, `src/systems/shipBoardFx.ts`, `src/systems/possession.ts`, `src/main.ts`
+
+---
+
+### 2026-07-11 — Character orient fix, inv menu, soft ship gravity
+- **Summary:** Stopped resetting the character quaternion to identity every frame (that broke planet alignment / facing). Idle facing tracks the camera again. Inventory inspect keeps a full lateral camera pan after collision clamp. Context menu/split mount on `document.body` with high z-index + pointer-events so hover/click work. Soft flight gravity returns near planets; atmosphere caps ~100 u/s with stronger brake and momentum drag.
+- **Areas:** `src/main.ts`, `src/systems/playerMovement.ts`, `src/systems/inventoryInspect.ts`, `src/ui/inventory.ts`, `src/ui/hud.css`, `src/config/ship.ts`, `src/systems/shipGravity.ts`, `src/systems/shipFlight.ts`, `src/systems/shipPlanetInteraction.ts`
+
+---
+
+### 2026-07-11 — Inventory categories, drop/pickup, lighting, inspect cam
+- **Summary:** Inventory shows filled items only, grouped by category (Mounts/Ore/Tools/…), with Sort + Stack tools, content-height equip rail, and max chrome width. Inspect camera faces the character straight-on with left framing and terrain/occluder clamps (player never moves). Context menu hover + Split slider; Drop spawns a world pickup (look + E). Drag ghost no longer sticks (`hidden` vs `display:flex`). Brighter/larger item previews. Sun lighting clamps below the local horizon and hemi ground fill is reduced at night.
+- **Areas:** `src/ui/inventory.ts`, `src/ui/hud.css`, `src/ui/itemPreview.ts`, `src/systems/inventoryInspect.ts`, `src/systems/worldDrops.ts`, `src/systems/possession.ts`, `src/inventory/playerInventory.ts`, `src/content/items/types.ts`, `src/main.ts`
+
+---
+
+### 2026-07-11 — Inventory framing fix, item folders, silver
+- **Summary:** Inventory inspect no longer translates the player (turn + camera only; stronger zoom-in and left framing). Unequip copies the stack into the first empty bag slot; drag ghost clears on drop via window pointer listeners. Item defs dropped traits/gems/gear score; each item lives in `src/content/items/<id>/{item,model}.ts` with required `stackable` + `maxStack` (default 99). Added stackable Silver (ingot model) seeded at ×48 in the bag.
+- **Areas:** `src/systems/inventoryInspect.ts`, `src/ui/inventory.ts`, `src/inventory/playerInventory.ts`, `src/content/items/`, `src/ui/itemPreview.ts`, `src/visuals/hoverboard.ts`
+- **Notes:** Hoverboard gameplay model now lives under `content/items/hoverboard/model.ts`; `visuals/hoverboard.ts` re-exports it.
+
+---
+
+### 2026-07-11 — Shadows, flight gravity, inventory framing + context menu
+- **Summary:** Sun shadows follow the player/ship with a tight frustum; character/ship/hoverboard cast shadows onto terrain. Flying ships no longer take orbital gravity pull (frame matching stays). Inventory inspect zooms in and shifts the character further left; drag ghost keeps rarity border/fill; right-click menu supports Equip / Unequip / Split / Drop.
+- **Areas:** `src/main.ts`, `src/engine/renderer.ts`, `src/systems/shipFlight.ts`, `src/systems/shipGravity.ts`, `src/systems/inventoryInspect.ts`, `src/ui/inventory.ts`, `src/ui/hud.css`, `src/inventory/playerInventory.ts`, `src/visuals/hoverboard.ts`, `src/visuals/animatedCharacter.ts`, `src/visuals/shipModel.ts`, `src/worldgen/planetMesh.ts`
+- **Notes:** Drop currently discards the stack (no world pickup yet). Split halves into the first empty bag slot.
+
+---
+
+### 2026-07-11 — Inventory camera nudge + slot 3D + 80% panels
+- **Summary:** Inspect camera only zooms/pans slightly while the character turns and shifts left; equip/bag panels are 80vh with scrolling; equip slots match bag cell size; all slots/tooltips/ghost use live 3D item previews (no SVG icons).
+- **Areas:** `src/systems/inventoryInspect.ts`, `src/ui/itemPreview.ts`, `src/ui/inventory.ts`, `src/ui/hud.css`, `src/main.ts`
+
+---
+
+### 2026-07-11 — Inventory framing, smooth inspect, 3D tooltip
+- **Summary:** Character inspect framing shifted away from the bag for a wider inventory grid; camera/turn/zoom ease in instead of snapping. Tooltip gear score is large-number-left + label-right; hoverboard tooltip uses a live 3D preview of the real board mesh.
+- **Areas:** `src/systems/inventoryInspect.ts`, `src/ui/itemPreview.ts`, `src/ui/inventory.ts`, `src/ui/hud.css`, `src/main.ts`
+
+---
+
+### 2026-07-11 — Inventory New World inspect
+- **Summary:** Inventory no longer blurs the world — left equip + right bag panels with the character visible in the middle. Opening Tab runs an inspect camera (character faces cam, framed off-center). Tooltips are NW-style (rarity-tinted icon header, gear score, description, 3 traits, 2 gems for mount/helmet/backpack/boots). Suit slot removed.
+- **Areas:** `src/ui/inventory.ts`, `src/ui/hud.css`, `src/systems/inventoryInspect.ts`, `src/content/items/`, `src/inventory/playerInventory.ts`, `src/main.ts`
+
+---
+
+### 2026-07-11 — Inventory (Tab) + item defs
+- **Summary:** New World–style inventory on **Tab**: equipment (Mount / Helmet / Suit / Backpack / Boots) + scrolling 5×10 bag, drag-drop, rarity tooltips. Item defs live under `src/content/items/{category}/` with a registry; Hoverboard starts equipped in Mount and is required to use **H**.
+- **Areas:** `src/content/items/`, `src/inventory/playerInventory.ts`, `src/ui/inventory.ts`, `src/ui/itemIcons.ts`, `src/ui/hud.css`, `src/systems/playerMovement.ts`, `src/systems/possession.ts`, `src/main.ts`, `index.html`
+
+---
+
+### 2026-07-11 — Hoverboard A/D rolls + water top
+- **Summary:** Air tricks are A/D roll only (W/S stay thrust); airborne strafe disabled while rolling. Water riding uses a higher clearance and hard clamp so the board stays on top of the liquid, not swimming depth.
+- **Areas:** `src/systems/playerMovement.ts`, `src/config/movement.ts`, `src/systems/possession.ts`, `index.html`
+
+---
+
+### 2026-07-11 — Hoverboard attach, flips, plank shape
+- **Summary:** Rider is parented to a board `riderAnchor` so flips stay locked together; air tricks use slow per-key axis rates (W/S pitch, A/D roll only); deck is a flat plank with tip rocker only.
+- **Areas:** `src/visuals/hoverboard.ts`, `src/systems/playerMovement.ts`, `src/main.ts`, `src/config/movement.ts`
+- **Notes:** Visual bob/deploy scale no longer affects the rider socket.
+
+---
+
+### 2026-07-11 — Hoverboard (H)
+- **Summary:** Press **H** on foot to deploy a procedural hoverboard under the feet — bobbing deck, glowing hover rings, speed trail. Overrides locomotion with faster slidey speeds, low friction coasting, eased slopes, and boosted jumps (great for hills). Stows in liquid / fly mode / boarding; HUD + help text updated.
+- **Areas:** `src/visuals/hoverboard.ts`, `src/systems/playerMovement.ts`, `src/config/movement.ts`, `src/ecs/components.ts`, `src/systems/possession.ts`, `src/main.ts`, `index.html`
+- **Notes:** Tunables live under `MOVEMENT.hoverboard*`. Trail is local streak FX (floating-origin safe).
+
+---
+
+### 2026-07-11 — Uncapped debug FPS, entities, flashlight
+- **Summary:** Debug (**L**) switches the game loop to an uncapped MessageChannel scheduler (soft-capped ~500fps) so FPS isn’t stuck on monitor Hz, with a live FPS sparkline, min/max, total/drawn poly counts, light level bar, and day factor. Entity wireframes show ship/character/station boxes and nearby ore spheres. **F** toggles an on-foot spotlight cone + soft point glow.
+- **Areas:** `src/engine/loop.ts`, `src/engine/renderer.ts`, `src/systems/debugOverlay.ts`, `src/systems/debugEntities.ts`, `src/systems/playerFlashlight.ts`, `src/main.ts`, `src/ui/hud.css`, `index.html`
+- **Notes:** Uncapped mode only while debug is on; normal play stays vsync/rAF.
+
+---
+
+### 2026-07-11 — Liquid LOD, face cull, boot loader, local XYZ
+- **Summary:** Liquid uses the same HIGH/MID/LOW distance bands as terrain (high built on approach). Terrain and liquid are split into 6 cube-face meshes with horizon + frustum culling so the far side / behind-camera faces skip draw. Debug shows planet-local xyz (+ radius). Boot loading UI is in `index.html` so it appears before JS. Disabled text selection on body, settings, debug, and map.
+- **Areas:** `src/visuals/planetLiquid.ts`, `src/worldgen/planetInstance.ts`, `src/worldgen/planetMesh.ts`, `src/worldgen/planetFaceCull.ts`, `src/systems/debugOverlay.ts`, `src/ui/loadingScreen.ts`, `src/ui/settingsMenu.ts`, `src/ui/hud.css`, `index.html`, `src/main.ts`
+- **Notes:** Debug terrain/liquid poly counts now reflect visible faces only. Collider meshes remain full-sphere.
+
+---
+
+### 2026-07-11 — Debug overlay (L): LOD tint + F3 stats
+- **Summary:** Press **L** to toggle a Minecraft-F3-style debug overlay. Terrain LODs tint green/yellow/red (HIGH/MID/LOW) with a legend; lists per-planet rendered terrain poly counts sorted highest-first; poly breakdown by category; FPS, coords, velocity, facing, mode; frame-time shares for sim / render prep / GPU submit; JS heap (Chrome), renderer geometries/textures/draw calls/tris, and GPU name when available.
+- **Areas:** `src/systems/debugOverlay.ts`, `src/engine/meshStats.ts`, `src/worldgen/planetInstance.ts`, `src/main.ts`, `src/ui/hud.css`, `index.html`
+- **Notes:** CPU/GPU % is frame-time share, not OS utilization. Per-LOD terrain materials so tint doesn't bleed across levels.
+
+---
+
 ### 2026-07-10 — 2× surface/liquid detail; procedural terrain rocks + ore
 - **Summary:** Near-surface terrain and liquid meshes use ~2× triangle count (`lodSegments` ×√2). Surface rocks are no longer GLB props — sparse boulder protrusions are baked into the heightfield (walkable mesh + collider, terrain palette). Ore nodules are unique procedural meshes per deposit (iron/copper metallic, crystal spikes + transmission, carbon lumps) with subdivision matched to planet facet size.
 - **Areas:** `src/worldgen/planetMesh.ts`, `src/worldgen/planet.ts`, `src/worldgen/meshBuffers.ts`, `src/worldgen/planetInstance.ts`, `src/visuals/planetRocks.ts`, `src/visuals/planetOre.ts`

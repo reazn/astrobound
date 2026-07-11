@@ -33,9 +33,9 @@ export const SHIP = {
   // Landing / takeoff. The ship sits landedHeight above the local surface (so
   // it rests ON the ground, not buried). Take-off and landing are smooth tweens
   // in the planet-local frame — no teleport — over these durations.
-  landedHeight: 4.5,
+  landedHeight: 2.15,
   launchSeconds: 1.6,
-  landSeconds: 1.6,
+  landSeconds: 1.85,
   launchLiftAccel: 6, // gentle upward velocity handed to free-flight at take-off
   launchClearance: 28, // hover height reached at end of take-off
 

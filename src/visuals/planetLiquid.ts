@@ -1,21 +1,13 @@
 import {
   Mesh, BufferGeometry, BufferAttribute, MeshToonMaterial, ShaderMaterial,
-  FrontSide, BackSide, Vector3, Color,
+  FrontSide, BackSide, Vector3, Color, Group,
 } from "three";
 import type { Planet } from "../worldgen/planet";
 import type { PlanetLiquid } from "../content/planets/types";
 import { toonGradient } from "./toonMaterial";
+import { applyCubeFaceVisibility } from "../worldgen/planetFaceCull";
+import { geometryTriangleCount } from "../engine/meshStats";
 
-// Liquid uses the same spherified-cube topology + flat facets as terrain.
-// MeshToonMaterial (not a raw ShaderMaterial) so logarithmic depth matches land.
-
-export interface PlanetLiquidMesh {
-  mesh: Mesh;
-  kind: PlanetLiquid["kind"];
-  level: number;
-  seaRadius: number;
-  update(sunDir: Vector3, dayFactor: number, camPlanetLocal: Vector3 | null): void;
-}
 
 const FACES = [
   { dir: [1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] },
@@ -64,7 +56,7 @@ function buildLiquidGeometry(
   foamColor: [number, number, number],
   _isLava: boolean,
   waveAmp: number,
-): BufferGeometry {
+): BufferGeometry[] {
   const S = Math.max(12, segments);
   const perFace = (S + 1) * (S + 1);
   const shared = new Float32Array(perFace * 6 * 3);
@@ -119,15 +111,38 @@ function buildLiquidGeometry(
   }
 
   if (wetTris === 0) {
-    return new BufferGeometry();
+    return Array.from({ length: 6 }, (_, f) => {
+      const g = new BufferGeometry();
+      g.userData.faceIndex = f;
+      return g;
+    });
   }
 
-  const positions = new Float32Array(wetTris * 9);
-  const normals = new Float32Array(wetTris * 9);
-  const colors = new Float32Array(wetTris * 9);
-  let t = 0;
+  const facePos: Float32Array[] = Array.from({ length: 6 }, () => new Float32Array(0));
+  const faceNor: Float32Array[] = Array.from({ length: 6 }, () => new Float32Array(0));
+  const faceCol: Float32Array[] = Array.from({ length: 6 }, () => new Float32Array(0));
+  const faceCount = new Int32Array(6);
 
-  const pushTri = (i0: number, i1: number, i2: number) => {
+  // First pass count per face
+  const faceWet = new Int32Array(6);
+  for (let f = 0; f < 6; f++) {
+    const faceBase = f * perFace;
+    for (let j = 0; j < S; j++) {
+      for (let i = 0; i < S; i++) {
+        const aI = faceBase + i + j * row;
+        const bI = aI + 1;
+        const cI = aI + row;
+        const dI = cI + 1;
+        if ((depths[aI] + depths[bI] + depths[dI]) / 3 > keepMin) faceWet[f]++;
+        if ((depths[aI] + depths[dI] + depths[cI]) / 3 > keepMin) faceWet[f]++;
+      }
+    }
+    facePos[f] = new Float32Array(faceWet[f] * 9);
+    faceNor[f] = new Float32Array(faceWet[f] * 9);
+    faceCol[f] = new Float32Array(faceWet[f] * 9);
+  }
+
+  const pushTri = (face: number, i0: number, i1: number, i2: number) => {
     const ax = shared[i0 * 3], ay = shared[i0 * 3 + 1], az = shared[i0 * 3 + 2];
     const bx = shared[i1 * 3], by = shared[i1 * 3 + 1], bz = shared[i1 * 3 + 2];
     const cx = shared[i2 * 3], cy = shared[i2 * 3 + 1], cz = shared[i2 * 3 + 2];
@@ -150,7 +165,6 @@ function buildLiquidGeometry(
     let col = lerp3(baseColor, deepColor, deepT);
     if (shoreT > 0.1) col = lerp3(col, foamColor, shoreT * 0.55);
 
-    // Subtle per-facet brightness only — keep hue close to the liquid base.
     const h = hash3(mx * 0.07, my * 0.09, mz * 0.06);
     const bright = 0.94 + h * 0.1;
     col = [
@@ -159,7 +173,11 @@ function buildLiquidGeometry(
       Math.min(1, Math.max(0, col[2] * bright)),
     ];
 
-    const o = t * 9;
+    const o = faceCount[face] * 9;
+    faceCount[face]++;
+    const positions = facePos[face];
+    const normals = faceNor[face];
+    const colors = faceCol[face];
     positions[o] = ax; positions[o + 1] = ay; positions[o + 2] = az;
     positions[o + 3] = bx; positions[o + 4] = by; positions[o + 5] = bz;
     positions[o + 6] = cx; positions[o + 7] = cy; positions[o + 8] = cz;
@@ -171,7 +189,6 @@ function buildLiquidGeometry(
       colors[o + k * 3 + 1] = col[1];
       colors[o + k * 3 + 2] = col[2];
     }
-    t++;
   };
 
   for (let f = 0; f < 6; f++) {
@@ -182,53 +199,32 @@ function buildLiquidGeometry(
         const bI = aI + 1;
         const cI = aI + row;
         const dI = cI + 1;
-        pushTri(aI, bI, dI);
-        pushTri(aI, dI, cI);
+        pushTri(f, aI, bI, dI);
+        pushTri(f, aI, dI, cI);
       }
     }
   }
 
-  const trim = t * 9;
-  const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new BufferAttribute(positions.slice(0, trim), 3));
-  geometry.setAttribute("normal", new BufferAttribute(normals.slice(0, trim), 3));
-  geometry.setAttribute("color", new BufferAttribute(colors.slice(0, trim), 3));
-  geometry.computeBoundingSphere();
-  return geometry;
+  return facePos.map((positions, f) => {
+    const geometry = new BufferGeometry();
+    const n = faceCount[f] * 9;
+    if (n > 0) {
+      geometry.setAttribute("position", new BufferAttribute(positions.slice(0, n), 3));
+      geometry.setAttribute("normal", new BufferAttribute(faceNor[f].slice(0, n), 3));
+      geometry.setAttribute("color", new BufferAttribute(faceCol[f].slice(0, n), 3));
+      geometry.computeBoundingSphere();
+    }
+    geometry.userData.faceIndex = f;
+    return geometry;
+  });
 }
 
-export function createPlanetLiquid(
-  planet: Planet,
-  segments?: number,
-): PlanetLiquidMesh | null {
-  const liq = planet.def.liquid;
-  if (!liq) return null;
-
-  // Sit clearly above the basin floor so it wins the depth test vs terrain.
-  const seaRadius = Math.max(planet.minR + 2, planet.seaLevel) + 1.6;
-  const isLava = liq.kind === "lava";
-  const base = hexRgb(liq.color);
-  const deep: [number, number, number] = isLava
-    ? [base[0] * 0.35, base[1] * 0.18, base[2] * 0.08]
-    : lerp3(base, [0.04, 0.1, 0.16], 0.75);
-  const foam = lerp3(base, isLava ? [1, 0.85, 0.35] : [0.78, 0.92, 1], 0.6);
-
-  const segs = segments ?? Math.max(28, Math.round(planet.def.faceSegments / 5));
-  const waveAmp = isLava ? 0.22 : 0.38;
-  const geometry = buildLiquidGeometry(
-    planet, seaRadius, segs, base, deep, foam, isLava, waveAmp,
-  );
-  if (!geometry.getAttribute("position") || geometry.getAttribute("position").count === 0) {
-    return null;
-  }
-
-  const opacity = Math.min(0.9, Math.max(0.78, liq.opacity + 0.18));
-  const waveUniforms = {
-    uWaveTime: { value: 0 },
-    uWaveAmp: { value: waveAmp },
-    uSeaR: { value: seaRadius },
-  };
-
+function makeLiquidMaterial(
+  isLava: boolean,
+  liqColor: string,
+  opacity: number,
+  waveUniforms: { uWaveTime: { value: number }; uWaveAmp: { value: number }; uSeaR: { value: number } },
+): MeshToonMaterial {
   const mat = new MeshToonMaterial({
     vertexColors: true,
     transparent: true,
@@ -243,11 +239,9 @@ export function createPlanetLiquid(
     polygonOffsetUnits: -4,
   });
   if (isLava) {
-    mat.emissive = new Color(liq.color);
+    mat.emissive = new Color(liqColor);
     mat.emissiveIntensity = 0.45;
   }
-  // Cheap radial ripple — two sines, no textures. Keeps MeshToon + log-depth.
-  // Waves fade out near/under sea radius so the buried shore fringe stays put.
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uWaveTime = waveUniforms.uWaveTime;
     shader.uniforms.uWaveAmp = waveUniforms.uWaveAmp;
@@ -276,13 +270,11 @@ export function createPlanetLiquid(
       );
   };
   mat.customProgramCacheKey = () => `liquid-wave-v2-${isLava ? "lava" : "water"}`;
+  return mat;
+}
 
-  const mesh = new Mesh(geometry, mat);
-  mesh.renderOrder = 2;
-  mesh.frustumCulled = false;
-
-  // Volume shell — includes log-depth chunks so it works with the renderer.
-  const volMat = new ShaderMaterial({
+function makeVolumeMaterial(isLava: boolean, seaRadius: number): ShaderMaterial {
+  return new ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: BackSide,
@@ -320,16 +312,204 @@ export function createPlanetLiquid(
       }
     `,
   });
-  const volume = new Mesh(geometry.clone(), volMat);
-  volume.scale.setScalar(0.99);
-  volume.renderOrder = 1;
-  mesh.add(volume);
+}
+
+type LiquidLodTier = "high" | "mid" | "low";
+
+export interface PlanetLiquidMesh {
+  mesh: Group;
+  kind: PlanetLiquid["kind"];
+  level: number;
+  seaRadius: number;
+  setLodLevel(level: LiquidLodTier): void;
+  ensureHigh(planet: Planet, highSegments: number): void;
+  releaseHigh(): void;
+  applyFaceCull(camPlanetLocal: Vector3, planetRadius: number): void;
+  visibleTriangleCount(): number;
+  update(sunDir: Vector3, dayFactor: number, camPlanetLocal: Vector3 | null): void;
+  dispose(): void;
+}
+
+function buildLiquidLevelGroup(
+  planet: Planet,
+  seaRadius: number,
+  segments: number,
+  base: [number, number, number],
+  deep: [number, number, number],
+  foam: [number, number, number],
+  isLava: boolean,
+  waveAmp: number,
+  mat: MeshToonMaterial,
+  volMat: ShaderMaterial,
+): { group: Group; faces: Mesh[] } | null {
+  const geos = buildLiquidGeometry(
+    planet, seaRadius, segments, base, deep, foam, isLava, waveAmp,
+  );
+  let any = false;
+  for (const g of geos) {
+    if (g.getAttribute("position")?.count) any = true;
+  }
+  if (!any) {
+    for (const g of geos) g.dispose();
+    return null;
+  }
+
+  const group = new Group();
+  const faces: Mesh[] = [];
+  for (let i = 0; i < 6; i++) {
+    const geo = geos[i];
+    const mesh = new Mesh(geo, mat);
+    mesh.userData.faceIndex = i;
+    mesh.renderOrder = 2;
+    mesh.frustumCulled = true;
+    if (geo.getAttribute("position")?.count) {
+      const volume = new Mesh(geo.clone(), volMat);
+      volume.scale.setScalar(0.99);
+      volume.renderOrder = 1;
+      volume.frustumCulled = true;
+      volume.userData.faceIndex = i;
+      mesh.add(volume);
+    }
+    group.add(mesh);
+    faces.push(mesh);
+  }
+  return { group, faces };
+}
+
+export function createPlanetLiquid(
+  planet: Planet,
+  lodSegs: { high: number; mid: number; low: number },
+): PlanetLiquidMesh | null {
+  const liq = planet.def.liquid;
+  if (!liq) return null;
+
+  const seaRadius = Math.max(planet.minR + 2, planet.seaLevel) + 1.6;
+  const isLava = liq.kind === "lava";
+  const base = hexRgb(liq.color);
+  const deep: [number, number, number] = isLava
+    ? [base[0] * 0.35, base[1] * 0.18, base[2] * 0.08]
+    : lerp3(base, [0.04, 0.1, 0.16], 0.75);
+  const foam = lerp3(base, isLava ? [1, 0.85, 0.35] : [0.78, 0.92, 1], 0.6);
+  const waveAmp = isLava ? 0.22 : 0.38;
+  const opacity = Math.min(0.9, Math.max(0.78, liq.opacity + 0.18));
+  const waveUniforms = {
+    uWaveTime: { value: 0 },
+    uWaveAmp: { value: waveAmp },
+    uSeaR: { value: seaRadius },
+  };
+  const mat = makeLiquidMaterial(isLava, liq.color, opacity, waveUniforms);
+  const volMat = makeVolumeMaterial(isLava, seaRadius);
+
+  const root = new Group();
+  const mid = buildLiquidLevelGroup(
+    planet, seaRadius, lodSegs.mid, base, deep, foam, isLava, waveAmp, mat, volMat,
+  );
+  const low = buildLiquidLevelGroup(
+    planet, seaRadius, lodSegs.low, base, deep, foam, isLava, waveAmp, mat, volMat,
+  );
+  if (!mid && !low) {
+    mat.dispose();
+    volMat.dispose();
+    return null;
+  }
+
+  let high: { group: Group; faces: Mesh[] } | null = null;
+  let highBuilding = false;
+  let highWanted = false;
+  let wantedLevel: LiquidLodTier = "mid";
+  let active: LiquidLodTier = "mid";
+  const levels: Record<LiquidLodTier, { group: Group; faces: Mesh[] } | null> = {
+    high: null,
+    mid,
+    low,
+  };
+  if (mid) root.add(mid.group);
+  if (low) {
+    root.add(low.group);
+    low.group.visible = false;
+  }
+
+  const showLevel = (level: LiquidLodTier) => {
+    active = level;
+    for (const key of ["high", "mid", "low"] as const) {
+      const L = levels[key];
+      if (L) L.group.visible = key === level;
+    }
+  };
+  showLevel(mid ? "mid" : "low");
 
   return {
-    mesh,
+    mesh: root,
     kind: liq.kind,
     level: liq.level,
     seaRadius,
+    setLodLevel(level) {
+      wantedLevel = level;
+      if (level === "high" && !levels.high) {
+        showLevel(levels.mid ? "mid" : "low");
+        return;
+      }
+      if (!levels[level]) return;
+      showLevel(level);
+    },
+    ensureHigh(p, highSegments) {
+      highWanted = true;
+      if (high || highBuilding) return;
+      highBuilding = true;
+      const tokenPlanet = p;
+      window.setTimeout(() => {
+        if (!highWanted) {
+          highBuilding = false;
+          return;
+        }
+        const built = buildLiquidLevelGroup(
+          tokenPlanet, seaRadius, highSegments, base, deep, foam, isLava, waveAmp, mat, volMat,
+        );
+        highBuilding = false;
+        if (!built || !highWanted) {
+          if (built) {
+            built.group.traverse((o) => {
+              const m = o as Mesh;
+              if (m.isMesh) m.geometry?.dispose();
+            });
+          }
+          return;
+        }
+        high = built;
+        levels.high = high;
+        root.add(high.group);
+        high.group.visible = false;
+        if (wantedLevel === "high") showLevel("high");
+      }, 0);
+    },
+    releaseHigh() {
+      highWanted = false;
+      if (high) {
+        root.remove(high.group);
+        high.group.traverse((o) => {
+          const m = o as Mesh;
+          if (m.isMesh) m.geometry?.dispose();
+        });
+        high = null;
+        levels.high = null;
+      }
+      if (wantedLevel === "high") wantedLevel = levels.mid ? "mid" : "low";
+      if (active === "high") showLevel(levels.mid ? "mid" : "low");
+    },
+    applyFaceCull(camPlanetLocal, planetRadius) {
+      const L = levels[active];
+      if (L) applyCubeFaceVisibility(L.faces, camPlanetLocal, planetRadius);
+    },
+    visibleTriangleCount() {
+      const L = levels[active];
+      if (!L || !L.group.visible) return 0;
+      let n = 0;
+      for (const face of L.faces) {
+        if (!face.visible) continue;
+        n += geometryTriangleCount(face.geometry);
+      }
+      return n;
+    },
     update(_sunDir, _dayFactor, camPlanetLocal) {
       waveUniforms.uWaveTime.value = performance.now() * 0.001;
       mat.opacity = opacity;
@@ -337,12 +517,21 @@ export function createPlanetLiquid(
         volMat.uniforms.uCamLocal.value.copy(camPlanetLocal);
         const under = camPlanetLocal.length() < seaRadius - 0.4 ? 1 : 0;
         volMat.uniforms.uUnder.value = under;
-        mesh.visible = under < 0.5;
-        volume.visible = true;
+        root.visible = under < 0.5;
       } else {
         volMat.uniforms.uUnder.value = 0;
-        mesh.visible = true;
+        root.visible = true;
       }
+    },
+    dispose() {
+      highWanted = false;
+      root.removeFromParent();
+      root.traverse((o) => {
+        const m = o as Mesh;
+        if (m.isMesh) m.geometry?.dispose();
+      });
+      mat.dispose();
+      volMat.dispose();
     },
   };
 }

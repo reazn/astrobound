@@ -24,7 +24,7 @@ Repo: https://github.com/reazn/astrobound
 | Systems | `src/systems/` (movement, flight, cameras, HUD, landing) |
 | Worldgen | `src/worldgen/` (heightfield, mesh LODs, worker) |
 | Visuals | `src/visuals/` (atmosphere, liquid, ship, character, rocks) |
-| UI | `src/ui/` |
+| UI | `src/ui/` (Tailwind utilities; entry `src/styles.css`) |
 | Agent changelog | `docs/AGENT_CHANGELOG.md` |
 
 ## Important conventions
@@ -34,6 +34,7 @@ Repo: https://github.com/reazn/astrobound
 - Only one Rapier planet trimesh active at a time (`physics.setActivePlanet`)
 - Camera spring-arm: terrain via Rapier + props/vehicles via `cameraOccluders` + `gameEntity` kinds
 - Double quotes in source; no drive-by refactors; don't commit unless asked
+- **UI styling:** Tailwind v4 utility classes on DOM nodes (`src/styles.css`). Do not add new hand-written CSS files for UI.
 
 ## Agent obligations
 

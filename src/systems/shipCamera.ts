@@ -34,11 +34,14 @@ export function updateShipCamera(
   physics: Physics,
   planetMaxR = 0,
   surfaceRadiusFn?: (nx: number, ny: number, nz: number) => number,
+  landBlend = 0,
 ): number {
   back.set(0, 0, 1).applyQuaternion(shipOrientation);
   up.set(0, 1, 0).applyQuaternion(shipOrientation);
 
-  offset.copy(back).multiplyScalar(SHIP.cameraDistance).addScaledVector(up, SHIP.cameraHeight);
+  const distScale = 1 - Math.max(0, Math.min(1, landBlend)) * 0.28;
+  offset.copy(back).multiplyScalar(SHIP.cameraDistance * distScale)
+    .addScaledVector(up, SHIP.cameraHeight * distScale);
   let wanted = offset.length();
   offsetDir.copy(offset).multiplyScalar(1 / wanted);
 
@@ -78,7 +81,10 @@ export function updateShipCamera(
 
   desiredPos.copy(shipRenderPos).addScaledVector(offsetDir, smoothedDist);
 
-  const followSpeed = Math.min(1, 1 - Math.exp(-SHIP.cameraFollow * dt));
+  const followRate = landBlend > 0
+    ? SHIP.cameraFollow * (0.4 + 0.6 * landBlend)
+    : SHIP.cameraFollow;
+  const followSpeed = Math.min(1, 1 - Math.exp(-followRate * dt));
   camera.position.lerp(desiredPos, followSpeed);
 
   if (nearPlanet && shipLocalPos && surfaceRadiusFn) {

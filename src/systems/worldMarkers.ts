@@ -3,7 +3,6 @@ import {
   CSS2DRenderer, CSS2DObject,
 } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { kindIconSvg } from "../ui/icons";
-import "../ui/hud.css";
 
 export interface MarkerBody {
   id: string;
@@ -37,12 +36,12 @@ function formatDist(u: number): string {
 
 function makeMarker(body: MarkerBody): Marker {
   const root = document.createElement("div");
-  root.className = "sb-wmark";
+  root.className = "pointer-events-none -translate-y-1/2 select-none whitespace-nowrap text-center font-['Exo_2',system-ui,sans-serif] text-[#e8f0f8] opacity-95 [text-shadow:0_2px_8px_rgba(0,0,0,0.85)]";
   root.innerHTML =
-    `<div class="sb-wmark-icon" style="color:${body.color};">${kindIconSvg(body.kind, body.color)}</div>` +
-    `<div class="sb-wmark-name">${body.name}</div>` +
-    `<div class="sb-wmark-kind">${body.kind}</div>` +
-    `<div class="sb-wmark-dist"></div>`;
+    `<div class="mx-auto flex size-[18px] items-center justify-center [&_svg]:size-4" style="color:${body.color};">${kindIconSvg(body.kind, body.color)}</div>` +
+    `<div class="mt-1 text-xs font-semibold uppercase tracking-[0.08em]" data-marker-name>${body.name}</div>` +
+    `<div class="text-[9px] uppercase tracking-[0.14em] opacity-55">${body.kind}</div>` +
+    `<div class="mt-0.5 font-mono text-[11px] text-[#7fd6ff] opacity-85" data-marker-dist></div>`;
   const obj = new CSS2DObject(root);
   obj.position.set(0, 0, 0);
   obj.center.set(0.5, 0.5);
@@ -50,8 +49,8 @@ function makeMarker(body: MarkerBody): Marker {
   return {
     body,
     obj,
-    nameEl: root.querySelector(".sb-wmark-name") as HTMLElement,
-    distEl: root.querySelector(".sb-wmark-dist") as HTMLElement,
+    nameEl: root.querySelector("[data-marker-name]") as HTMLElement,
+    distEl: root.querySelector("[data-marker-dist]") as HTMLElement,
   };
 }
 

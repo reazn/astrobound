@@ -22,11 +22,24 @@ import { createStar } from "./visuals/star";
 import { createStation } from "./visuals/station";
 import { createStarfield, setStarfieldOpacity } from "./visuals/sky";
 import { createCameraRig, updateCameraFollow } from "./systems/cameraFollow";
+import { updateInventoryInspect, resetInventoryInspect, beginInventoryInspect } from "./systems/inventoryInspect";
 import { updateShipCamera } from "./systems/shipCamera";
 import { updatePossession, type PossessionState } from "./systems/possession";
 import { createSpaceHud, type NavTarget } from "./systems/spaceHud";
+import { createDebugOverlay } from "./systems/debugOverlay";
+import { createDebugEntities } from "./systems/debugEntities";
+import { createPlayerFlashlight } from "./systems/playerFlashlight";
+import { createShipBoardFx } from "./systems/shipBoardFx";
+import { createHoverboard } from "./visuals/hoverboard";
+import { countVisibleTriangles, meshTriangleCount } from "./engine/meshStats";
 import { createWorldMarkers, type MarkerBody } from "./systems/worldMarkers";
 import { createSystemMap, type MapBody } from "./ui/systemMap";
+import {
+  spawnWorldDrop, updateWorldDrops, rebindWorldDropOccluders,
+} from "./systems/worldDrops";
+import { createInventoryUI } from "./ui/inventory";
+import { createPlayerInventory } from "./inventory/playerInventory";
+import { settings } from "./config/settings";
 import {
   createKnownSystemsCatalog, discoverKnownSystem, mapBodiesFromSystemDef,
   type KnownSystem,
@@ -45,8 +58,7 @@ import { describeEntity } from "./ecs/gameEntity";
 import { SHIP } from "./config/ship";
 import { starDefFromHome, type StarDef } from "./config/star";
 import { MOVEMENT } from "./config/movement";
-import { settings } from "./config/settings";
-import "./ui/hud.css";
+import "./styles.css";
 
 const PLAYER_HEIGHT = 1.9;
 
@@ -157,6 +169,7 @@ async function main() {
       velocity: new Vector3(), grounded: false, jumpsLeft: 0, coyote: 0, buffer: 0,
       sliding: false, slideTime: 0, slideCooldown: 0, up: spawnUp.clone(),
       faceDir: face0.clone(), speed01: 0, didJump: false, didSlide: false, flying: false, inLiquid: false,
+      hoverboarding: false, hoverPitch: 0, hoverRoll: 0, hoverPitchVel: 0, hoverRollVel: 0,
     },
     stats: { moveSpeedMult: 1, extraJumps: MOVEMENT.baseExtraJumps, jumpHeightMult: 1 },
     character,
@@ -227,9 +240,11 @@ async function main() {
       next.object.renderOrder = 10;
       next.object.traverse((o) => { o.renderOrder = 10; });
       next.object.visible = character.object.visible;
-      next.object.position.copy(character.object.position);
-      next.object.quaternion.copy(character.object.quaternion);
-      rc.scene.add(next.object);
+      next.object.position.set(0, 0, 0);
+      next.object.quaternion.identity();
+      const riding = player.movement?.hoverboarding;
+      if (riding) hoverboard.riderAnchor.add(next.object);
+      else rc.scene.add(next.object);
       const prev = character;
       character = next;
       currentCharacterId = characterId;
@@ -244,12 +259,32 @@ async function main() {
   let menu: SettingsMenu;
   const input = createInput(rc.renderer.domElement, () => menu.open());
   menu = createSettingsMenu(input, rc.camera, {
-    onShipChange: swapShip,
-    onCharacterChange: swapCharacter,
+    appearance: {
+      onShipChange: swapShip,
+      onCharacterChange: swapCharacter,
+    },
   });
   const hud = createSpaceHud(document.body);
+  const debugOverlay = createDebugOverlay(document.body);
+  const debugEntities = createDebugEntities(rc.scene);
+  const flashlight = createPlayerFlashlight(rc.scene);
+  const hoverboard = createHoverboard();
+  rc.scene.add(hoverboard.group);
+  rc.scene.add(hoverboard.trail);
+  const flashForward = new Vector3();
+  const hoverBoardQ = new Quaternion();
+  const hoverPitchQ = new Quaternion();
+  const hoverRollQ = new Quaternion();
+  const hoverRight = new Vector3();
+  let gameLoop: ReturnType<typeof createLoop>;
+  let simMsAccum = 0;
+  let lastFrameMs = 16.7;
+  let lastPrepMs = 0;
+  let lastGpuMs = 0;
+  let lastDayFactor = 1;
+  let lastLightLevel = 1;
   const underFilter = document.createElement("div");
-  underFilter.className = "sb-underwater";
+  underFilter.className = "pointer-events-none fixed inset-0 z-10 bg-teal-900/25 opacity-0 transition-opacity duration-200 shadow-[inset_0_0_120px_rgba(0,20,40,0.55)] mix-blend-multiply";
   document.body.appendChild(underFilter);
 
   const shipSystemPos = new Vector3();
@@ -294,7 +329,8 @@ async function main() {
 
   const systemMap = createSystemMap(document.body, {
     onToggle: (open) => {
-      input.setPaused(open);
+      if (open && inventoryUI.open) inventoryUI.setOpen(false);
+      input.setPaused(open || inventoryUI.open || menu.isOpen);
       if (open) input.exitLock();
     },
     onSelectSystem: (id) => {
@@ -310,8 +346,43 @@ async function main() {
     },
   });
   systemMap.setCatalog(knownSystems, activeSystemId, previewSystemId);
+  menu.bindSystemMap(systemMap);
+  systemMap.setKeybindsEnabled(false);
 
-  const state: PossessionState = { mode: "onFoot", currentPlanet: home, dockBay: null };
+  const state: PossessionState = {
+    mode: "onFoot", currentPlanet: home, dockBay: null, boardPhase: "idle",
+  };
+  const boardFx = createShipBoardFx();
+  rc.scene.add(boardFx.group);
+
+  const dropSpawnPos = new Vector3();
+  const playerInventory = createPlayerInventory();
+  const inventoryUI = createInventoryUI(document.body, playerInventory, {
+    canOpen: () => !menu.isOpen && !systemMap.open && state.mode === "onFoot"
+      && state.boardPhase === "idle",
+    onToggle: (open) => {
+      input.setPaused(open || systemMap.open || menu.isOpen);
+      if (open) {
+        input.exitLock();
+        beginInventoryInspect(rc.camera, player.movement!.up);
+      } else if (settings.cursorLocked && !systemMap.open && !menu.isOpen) {
+        input.requestLock();
+        resetInventoryInspect();
+      } else {
+        resetInventoryInspect();
+      }
+    },
+    onDropItem: (itemId, qty) => {
+      const m = player.movement!;
+      dropSpawnPos.copy(player.position!)
+        .addScaledVector(m.faceDir, 1.2)
+        .addScaledVector(m.up, 0.35);
+      const n = dropSpawnPos.clone().normalize();
+      const r = state.currentPlanet.planet.surfaceRadius(n.x, n.y, n.z) + 0.35;
+      dropSpawnPos.copy(n).multiplyScalar(r);
+      spawnWorldDrop(state.currentPlanet, dropSpawnPos, itemId, qty);
+    },
+  });
 
   const interpLocal = new Vector3();
   const interpBody = new Vector3();
@@ -367,6 +438,7 @@ async function main() {
       });
     }
     registeredRockPlanetId = planet.def.id;
+    rebindWorldDropOccluders();
   };
   syncCameraOccluders(home);
 
@@ -472,6 +544,7 @@ async function main() {
         orbitPositionAt(p.def.orbit, 0, p.systemPosition);
         p.prevSystemPosition.copy(p.systemPosition);
       }
+      debugOverlay.applyPlanetTints(planets);
       if (stationEnabled) {
         orbitPositionAt(STATION_ORBIT, 0, stationSystemPos);
         stationPrevPos.copy(stationSystemPos);
@@ -494,6 +567,7 @@ async function main() {
   };
 
   const simStep = (dt: number) => {
+    const simT0 = performance.now();
     game.time += dt;
     simTick++;
     for (const p of planets) p.prevSystemPosition.copy(p.systemPosition);
@@ -505,6 +579,19 @@ async function main() {
       settings.maintainMomentum = !settings.maintainMomentum;
     }
 
+    if (input.justPressed("KeyL")) {
+      const on = debugOverlay.toggle();
+      debugOverlay.applyPlanetTints(planets);
+      debugEntities.setEnabled(on);
+      gameLoop.setUncapped(on);
+      hud.setPrompt(on ? "Debug on · uncapped FPS (L)" : "Debug overlay off");
+    }
+
+    if (input.justPressed("KeyF")) {
+      const on = flashlight.toggle();
+      hud.setPrompt(on ? "Flashlight on (F)" : "Flashlight off");
+    }
+
     updatePossession(state, {
       world, player, ship, physics, input, hud, planets,
       onFootForward: onFootRig.forward, character,
@@ -513,7 +600,19 @@ async function main() {
       starRadius: activeStar.radius,
       stationEnabled,
       getAimDir: () => aimDirSystem,
+      inventory: playerInventory,
+      getCamLook: () => {
+        rc.camera.getWorldDirection(camForward);
+        return {
+          pos: rc.camera.position,
+          forward: camForward,
+          planetLodPos: state.currentPlanet.lod.position,
+        };
+      },
+      onPickup: () => inventoryUI.refresh(),
     }, dt);
+
+    if (state.mode !== "onFoot" && inventoryUI.open) inventoryUI.setOpen(false);
 
     if (state.currentPlanet.def.id !== activeColliderPlanetId) {
       physics.setActivePlanet(
@@ -528,12 +627,17 @@ async function main() {
 
     physics.step();
     input.clearFrame();
+    simMsAccum += performance.now() - simT0;
   };
 
   const renderStep = (alpha: number) => {
     const now = performance.now();
     const dtReal = Math.min(0.1, (now - lastRenderT) / 1000);
+    lastFrameMs = Math.max(0.001, now - lastRenderT);
     lastRenderT = now;
+    const prepT0 = performance.now();
+    const simMs = simMsAccum;
+    simMsAccum = 0;
 
     const s = ship.ship!;
     let focusPlanet: PlanetInstance | null;
@@ -549,24 +653,87 @@ async function main() {
       renderOrigin.copy(interpBody).add(interpLocal);
       focusPlanet = state.currentPlanet;
 
-      character.object.position.set(0, 0, 0);
-      orientOnSurface(character.object, player.movement!.up, player.movement!.faceDir);
+      if (!inventoryUI.open) character.object.position.set(0, 0, 0);
+      const mFoot = player.movement!;
+      const riding = mFoot.hoverboarding && !inventoryUI.open;
+      if (riding) {
+        basisQuaternion(mFoot.up, mFoot.faceDir, hoverBoardQ);
+        hoverRight.crossVectors(mFoot.up, mFoot.faceDir).normalize();
+        hoverPitchQ.setFromAxisAngle(hoverRight, mFoot.hoverPitch);
+        hoverRollQ.setFromAxisAngle(mFoot.faceDir, mFoot.hoverRoll);
+        hoverBoardQ.multiply(hoverPitchQ).multiply(hoverRollQ);
+
+        hoverboard.setActive(true);
+        hoverboard.group.position.set(0, 0, 0);
+        hoverboard.group.quaternion.copy(hoverBoardQ);
+        if (character.object.parent !== hoverboard.riderAnchor) {
+          hoverboard.riderAnchor.add(character.object);
+          character.object.position.set(0, 0, 0);
+          character.object.quaternion.identity();
+        }
+      } else {
+        if (character.object.parent !== rc.scene) {
+          rc.scene.add(character.object);
+          character.object.position.set(0, 0, 0);
+        }
+        if (!inventoryUI.open) {
+          character.object.position.set(0, 0, 0);
+        }
+        hoverboard.setActive(false);
+      }
       character.object.visible = true;
+      hoverboard.update(
+        dtReal,
+        inventoryUI.open ? 0 : mFoot.speed01,
+        mFoot.grounded,
+        interpLocal,
+        interpLocal,
+      );
 
       shipOccluderCenter.copy(ship.position!);
-      updateCameraFollow(
-        onFootRig, rc.camera, character.object.position, player.movement!.up,
-        input, physics, character, player.position!, dtReal,
-        (nx, ny, nz) => cp.planet.surfaceRadius(nx, ny, nz),
-      );
+      if (inventoryUI.open) {
+        updateInventoryInspect(
+          rc.camera, character, mFoot.up, mFoot.faceDir,
+          player.position!, physics, dtReal,
+          (nx, ny, nz) => cp.planet.surfaceRadius(nx, ny, nz),
+        );
+      } else {
+        character.object.position.set(0, 0, 0);
+        if (!riding) {
+          orientOnSurface(character.object, mFoot.up, mFoot.faceDir);
+        }
+        updateCameraFollow(
+          onFootRig, rc.camera, character.object.position, player.movement!.up,
+          input, physics, character, player.position!, dtReal,
+          (nx, ny, nz) => cp.planet.surfaceRadius(nx, ny, nz),
+        );
+      }
 
       tmpVec.copy(ship.position!).sub(interpLocal);
       shipModel.group.position.copy(tmpVec);
       orientOnSurface(shipModel.group, ship.up!, ship.faceDir!);
       shipModel.setEngineGlow(0.12);
       shipModel.setOpacity(1);
+
+      if (state.boardPhase === "boarding") {
+        if (boardFx.mode !== "boarding") {
+          boardFx.startBoarding(
+            character.object.position.clone().addScaledVector(mFoot.up, 1.0),
+            shipModel.group.position.clone(),
+          );
+        }
+        if (boardFx.update(dtReal, character)) {
+          state.mode = "ship";
+          state.boardPhase = "idle";
+          character.object.visible = false;
+          character.setOpacity(1);
+        }
+      }
     } else if (s.mode === "docked") {
+      if (character.object.parent !== rc.scene) rc.scene.add(character.object);
       character.object.visible = false;
+      hoverboard.setActive(false);
+      hoverboard.update(dtReal, 0, false, interpLocal, interpLocal);
       interpBody.lerpVectors(stationPrevPos, stationSystemPos, alpha);
       interpLocal.lerpVectors(ship.prevPosition!, ship.position!, alpha);
       renderOrigin.copy(interpBody).add(interpLocal);
@@ -579,7 +746,11 @@ async function main() {
       shipModel.setEngineGlow(0.1);
       shipModel.setOpacity(1);
     } else {
-      character.object.visible = false;
+      if (character.object.parent !== rc.scene) rc.scene.add(character.object);
+      const exiting = state.boardPhase === "exiting";
+      character.object.visible = exiting;
+      hoverboard.setActive(false);
+      hoverboard.update(dtReal, 0, false, interpLocal, interpLocal);
       // landed / launching / landing all live in the planet-LOCAL frame (stable
       // under an orbiting planet — no teleport, no fly-away); flying is system-space.
       const localMode = s.mode === "landed" || s.mode === "launching" || s.mode === "landing";
@@ -637,6 +808,7 @@ async function main() {
         collidePlanet
           ? (nx, ny, nz) => collidePlanet.planet.surfaceRadius(nx, ny, nz)
           : undefined,
+        s.mode === "landing" ? s.phaseT : (s.mode === "landed" ? 1 : 0),
       );
       const fade = Math.min(1, Math.max(0,
         (camDist - SHIP.cameraFadeEnd) / (SHIP.cameraFadeStart - SHIP.cameraFadeEnd)));
@@ -645,6 +817,25 @@ async function main() {
         ? (s.warpPhase === "cruising" ? 2.8 : 0.4 + s.warpT * 1.6)
         : Math.abs(s.throttle) * (s.boosting ? 2.2 : 1) + 0.1;
       shipModel.setEngineGlow(glow, s.boosting || s.warpPhase === "cruising");
+
+      if (exiting && localMode) {
+        tmpVec.copy(player.position!).sub(ship.position!);
+        character.object.position.copy(tmpVec);
+        orientOnSurface(character.object, player.movement!.up, player.movement!.faceDir, true);
+        if (boardFx.mode !== "exiting") {
+          boardFx.startExiting(
+            shipModel.group.position.clone(),
+            character.object.position.clone().addScaledVector(player.movement!.up, 1.0),
+          );
+        }
+        if (boardFx.update(dtReal, character)) {
+          state.mode = "onFoot";
+          state.boardPhase = "idle";
+          character.setOpacity(1);
+          character.object.visible = true;
+          character.object.position.set(0, 0, 0);
+        }
+      }
     }
 
     for (const p of planets) {
@@ -670,12 +861,22 @@ async function main() {
     stationVisual.update(dtReal);
 
     sunDir.copy(STAR_POS).sub(renderOrigin).normalize();
-    rc.sun.position.set(0, 0, 0).addScaledVector(sunDir, 220);
-    rc.sun.target.position.set(0, 0, 0);
+    // Follow the focus with a short shadow boom so maps stay tight (no planet-scale square).
+    const shadowFocus = state.mode === "onFoot"
+      ? character.object.position
+      : shipModel.group.position;
+    // Never light from under the local horizon — clamp the boom to sky-side.
+    const focusUp = state.mode === "onFoot" ? player.movement!.up : (ship.up ?? atmoUp);
+    const sunElevBoom = sunDir.dot(focusUp);
+    if (sunElevBoom < 0.02) {
+      tmpVec.copy(sunDir).addScaledVector(focusUp, -sunElevBoom + 0.02).normalize();
+    } else {
+      tmpVec.copy(sunDir);
+    }
+    rc.sun.target.position.copy(shadowFocus);
+    rc.sun.position.copy(shadowFocus).addScaledVector(tmpVec, 42);
     rc.sun.target.updateMatrixWorld();
-    // Directional shadow maps paint a hard orthographic square on planet-scale
-    // terrain — leave them off; toon lighting still reads fine without them.
-    rc.sun.castShadow = false;
+    rc.sun.castShadow = sunElevBoom > 0.02;
 
     // Starfield rides the camera so it stays infinitely far; dimmed by atmosphere.
     starfield.position.copy(rc.camera.position);
@@ -696,6 +897,7 @@ async function main() {
       );
       const inside = focusPlanet.atmosphere.insideFactor;
       const day = focusPlanet.atmosphere.dayFactor;
+      lastDayFactor = day;
       const camAlt = Math.max(
         0,
         rc.camera.position.distanceTo(focusPlanet.lod.position) - focusPlanet.planet.maxR,
@@ -709,11 +911,13 @@ async function main() {
         const fogFar = focusPlanet.def.fogFar * (1.8 + t);
         rc.setFog(focusPlanet.def.palette.atmosphere, fogNear, fogFar);
       }
-      // Day/night lighting: dim hemi + sun on the night side.
+      // Day/night lighting: sun only from above the local horizon; no under-lighting.
+      const sunElev = Math.max(0, atmoUp.dot(sunDir));
       rc.hemi.color.set(focusPlanet.def.palette.atmosphere);
-      rc.hemi.groundColor.set(focusPlanet.def.palette.lowland);
-      rc.hemi.intensity = 0.18 + day * 0.55;
-      rc.sun.intensity = activeStar.lightIntensity * (0.12 + day * 0.88) * 0.7;
+      rc.hemi.groundColor.set(focusPlanet.def.palette.lowland).multiplyScalar(0.25 + day * 0.55);
+      rc.hemi.intensity = 0.05 + day * 0.32;
+      rc.sun.intensity = activeStar.lightIntensity * sunElev * sunElev * (0.35 + day * 0.65) * 0.85;
+      if (sunElev < 0.02) rc.sun.intensity = 0;
       // Stars visible at night / twilight even while inside atmosphere.
       const starOp = Math.max(0, 1 - inside * day * 1.25);
       setStarfieldOpacity(starfield, starOp);
@@ -726,7 +930,8 @@ async function main() {
         camPlanetLocal.copy(rc.camera.position).sub(focusPlanet.lod.position);
         under = camPlanetLocal.length() < focusPlanet.liquid.seaRadius - 0.3;
       }
-      underFilter.classList.toggle("is-on", under);
+      underFilter.classList.toggle("opacity-100", under);
+      underFilter.classList.toggle("opacity-0", !under);
       if (under && focusPlanet.liquid) {
         const tint = focusPlanet.liquid.kind === "lava"
           ? "rgba(180, 40, 10, 0.42)"
@@ -740,8 +945,15 @@ async function main() {
       rc.setBackground(null, 0);
       rc.hemi.intensity = 0.7;
       rc.sun.intensity = activeStar.lightIntensity * 0.7;
-      underFilter.classList.remove("is-on");
+      underFilter.classList.remove("opacity-100");
+      underFilter.classList.add("opacity-0");
+      lastDayFactor = 1;
     }
+
+    updateWorldDrops(
+      dtReal,
+      state.mode === "onFoot" ? state.currentPlanet.def.id : null,
+    );
 
     const piloting = state.mode === "ship" && (s.mode === "flying" || s.warpPhase !== "idle");
     hud.setPilotingVisible(piloting);
@@ -858,16 +1070,119 @@ async function main() {
       hud.setCompassVisible(false);
     }
 
+    // Surface illumination estimate (N·L + fill + flashlight boost).
+    {
+      const up = state.mode === "onFoot"
+        ? player.movement!.up
+        : (ship.up ?? atmoUp);
+      const nDotL = Math.max(0, up.dot(sunDir));
+      const ambient = rc.hemi.intensity * 0.35;
+      const sunLit = nDotL * lastDayFactor * Math.min(1.2, rc.sun.intensity * 0.45);
+      lastLightLevel = Math.min(1, ambient + sunLit + (flashlight.enabled && state.mode === "onFoot" ? 0.28 : 0));
+    }
+
+    rc.camera.getWorldDirection(flashForward);
+    const flashUp = state.mode === "onFoot" ? player.movement!.up : (ship.up ?? atmoUp);
+    const flashOrigin = state.mode === "onFoot"
+      ? character.object.position
+      : shipModel.group.position;
+    flashlight.update(state.mode === "onFoot", flashOrigin, flashForward, flashUp);
+
+    debugEntities.update({
+      enabled: debugOverlay.enabled,
+      ship: shipModel.group,
+      character: character.object,
+      characterVisible: state.mode === "onFoot" && character.object.visible,
+      station: stationVisual.group,
+      stationEnabled,
+      focusPlanet,
+      camPos: rc.camera.position,
+    });
+
+    lastPrepMs = performance.now() - prepT0;
+    const gpuT0 = performance.now();
     rc.render();
+    lastGpuMs = performance.now() - gpuT0;
     worldMarkers.render(rc.scene, rc.camera);
+
+    if (debugOverlay.enabled) {
+      let oreTris = 0;
+      let rockTris = 0;
+      let atmoTris = 0;
+      let ringTris = 0;
+      for (const p of planets) {
+        oreTris += countVisibleTriangles(p.ore.group);
+        rockTris += countVisibleTriangles(p.rocks.group);
+        atmoTris += countVisibleTriangles(p.atmosphere.group);
+        if (p.atmosphere.skyDome.visible) {
+          atmoTris += meshTriangleCount(p.atmosphere.skyDome);
+        }
+        if (p.rings) ringTris += countVisibleTriangles(p.rings.group);
+      }
+      const velOut = tmpVec;
+      if (state.mode === "ship") {
+        velOut.copy(s.velocity);
+      } else if (player.prevPosition) {
+        velOut.copy(player.position!).sub(player.prevPosition).multiplyScalar(60);
+      } else {
+        velOut.set(0, 0, 0);
+      }
+      let planetLocal: typeof camPlanetLocal | null = null;
+      if (state.mode === "onFoot") {
+        planetLocal = player.position!;
+      } else if (s.mode === "landed" || s.mode === "launching" || s.mode === "landing") {
+        planetLocal = ship.position!;
+      } else if (focusPlanet) {
+        camPlanetLocal.copy(renderOrigin).sub(focusPlanet.systemPosition);
+        planetLocal = camPlanetLocal;
+      }
+      debugOverlay.update({
+        planets,
+        camera: rc.camera,
+        renderer: rc.renderer,
+        scene: rc.scene,
+        timing: {
+          simMs,
+          renderPrepMs: lastPrepMs,
+          gpuSubmitMs: lastGpuMs,
+          frameMs: lastFrameMs,
+        },
+        mode: state.mode,
+        shipMode: state.mode === "ship" ? s.mode : "",
+        coords: renderOrigin,
+        planetLocal,
+        velocity: velOut,
+        planetName: focusPlanet?.def.name ?? state.currentPlanet.def.name,
+        systemName: knownSystems.find((k) => k.def.id === activeSystemId)?.def.name ?? activeSystemId,
+        tick: simTick,
+        gameTime: game.time,
+        lightLevel: lastLightLevel,
+        dayFactor: lastDayFactor,
+        uncapped: gameLoop.uncapped,
+        flashlight: flashlight.enabled,
+        entities: debugEntities.counts,
+        extras: [
+          { label: "Asteroids", tris: meshTriangleCount(asteroids.mesh) },
+          { label: "Ship", tris: countVisibleTriangles(shipModel.group) },
+          { label: "Character", tris: countVisibleTriangles(character.object) },
+          { label: "Station", tris: stationEnabled ? countVisibleTriangles(stationVisual.group) : 0 },
+          { label: "Star", tris: countVisibleTriangles(star.group) },
+          { label: "Atmosphere", tris: atmoTris },
+          { label: "Ore", tris: oreTris },
+          { label: "Rocks", tris: rockTris },
+          { label: "Rings", tris: ringTris },
+        ],
+      });
+    }
   };
 
-  createLoop({
+  gameLoop = createLoop({
     fixedDt: 1 / 60,
     beginFrame: () => input.beginFrame(),
     update: simStep,
     render: renderStep,
-  }).start();
+  });
+  gameLoop.start();
   loading.setProgress(1, "Ready");
   loading.done();
 
