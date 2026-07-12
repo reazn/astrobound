@@ -4,6 +4,13 @@ Living history of agent-driven changes. **Append new entries at the top** after 
 
 ---
 
+### 2026-07-12 — Server build CommonJS for Colyseus/Coolify
+- **Summary:** Production `dist/` was ESM (`"type": "module"` + `module: NodeNext`), so Node failed named imports from CJS Colyseus at deploy. Switched server emit to CommonJS, removed `"type": "module"`, and moved the drizzle `uniqueIndex` into the `inventories` table callback so schema loads under CJS.
+- **Areas:** `server/package.json`, `server/tsconfig.json`, `server/src/db/schema.ts`
+- **Notes:** Force a Coolify rebuild without cache after deploy so the old ESM `dist/` is not reused.
+
+---
+
 ### 2026-07-11 — System shards + net debug panel
 - **Summary:** Colyseus `system` rooms now `filterBy(["systemId"])` (different systems = different rooms; same system auto-shards at `MAX_CLIENTS_PER_ROOM`). Map jump rejoins the target system room in MP. L-debug right panel shows connect/room/peer/drift/reject counters. `/health` + `/match/rooms` list live rooms; README covers Ubuntu VPS + Caddy/Coolify.
 - **Areas:** `server/src/index.ts`, `server/src/rooms/SystemRoom.ts`, `src/net/remoteAdapter.ts`, `src/net/adapterTypes.ts`, `src/systems/debugOverlay.ts`, `src/main.ts`, `server/README.md`, `docker-compose.yml`

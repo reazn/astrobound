@@ -19,7 +19,9 @@ export const inventories = pgTable("inventories", {
   isPrimary: boolean("is_primary").notNull().default(false),
   capacity: integer("capacity").notNull().default(50),
   revision: integer("revision").notNull().default(0),
-});
+}, (table) => ({
+  playersPrimaryInvIdx: uniqueIndex("players_primary_inv").on(table.playerId, table.isPrimary),
+}));
 
 export const items = pgTable("items", {
   uuid: uuid("uuid").primaryKey().defaultRandom(),
@@ -71,5 +73,3 @@ export const tradeSessions = pgTable("trade_sessions", {
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
-
-export const playersPrimaryInvIdx = uniqueIndex("players_primary_inv").on(inventories.playerId, inventories.isPrimary);
